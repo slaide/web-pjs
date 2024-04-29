@@ -1,0 +1,14 @@
+<html>
+    <head>
+        <script src="../p.js"></script>
+    </head>
+    <body>
+        <script>
+            var times = make_observable(0);
+            function onclick() {
+                times.with(v=>v+1)
+            }
+        </script>
+        <button class="data" p:on-click="onclick()">clicked {{times}} times</button>
+    </body>
+</html>

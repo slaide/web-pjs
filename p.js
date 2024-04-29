@@ -25,7 +25,53 @@
 
 /// the one single exception (currently) to this rule are templates, which are lifted out of a subtree and saved in p.templates:
 /// - <template name='some_template_name'>...</template> -> saves the template for later use
-/// - the template is then accessible as p.templates.some_template_name as DocumentSnippet (only after the initialization of the subtree is complete, i.e. it is not immediately available in p:init, but e.g. in p:init-vis)
+/// - the template is then accessible as p.templates.get(some_template_name) as DocumentSnippet (only after the initialization of the subtree is complete, i.e. it is not immediately available in p:init, but e.g. in p:init-vis)
+
+class Info{
+    constructor(){
+        this.element=null
+        this.target=null
+    }
+}
+
+class EventFuncArgument{
+    /**
+     * 
+     * @param {string?} property 
+     * @param {{value?:any,target?:any,currentTarget?:any,element?:any}?} otherargs
+     */
+    constructor(property,otherargs){
+        this.property=property
+
+        if(!otherargs){return}
+        this.value=otherargs.value
+        this.target=otherargs.target
+        this.currentTarget=otherargs.currentTarget
+        this.element=otherargs.element
+    }
+}
+
+/**
+ * @callback EventFunc
+ * @param {EventFuncArgument} info
+ */
+
+class Binding{
+    /**
+     * @param {string} bindname
+     * @param {any} value
+     */
+    constructor(bindname,value){
+        this.bindname=bindname
+        this.value=value
+    }
+}
+
+class ElementInfo{
+    constructor(){
+        this.p={}
+    }
+}
 
 /**
  * checks if the argument is an object 
@@ -45,9 +91,9 @@ function isIterable(obj){
 }
 /**
  * returns the key of obj that has the value val, i.e. such that obj[key]===val
- * @param {object} obj 
- * @param {any} val 
- * @returns {null|Key}
+ * @param {any} obj 
+ * @param {number|string} val 
+ * @returns {undefined|number|string}
  */
 function keyOf(obj,val){
     for(let key in obj){
@@ -59,28 +105,356 @@ function keyOf(obj,val){
 }
 
 /**
- * returns a wrapper around an arbitrary value that makes it behave like an object
- * @param {any} value
- * @returns {object}
+ * wrap a value to make it behave like an object (i.e. can be used in an observable object)
+ * @template T
  */
-function valueObject(value){
-    return {
-        _isValueObject:true,
-        value: value,
-        valueOf: function() {
-            return this.value;
-        },
-    };
+class ValueObject{
+    /**
+     * @param {T} value
+     */
+    constructor(value){
+        this._isValueObject=true
+        this._value=value
+    }
+
+    valueOf(){
+        return this._value
+    }
 }
 
 let observable_ret_container=true
 
+// this is a basic template class called TestClass here the parameter T extends object
+
+
+// end basic template class
+
+/**
+ * @template {object} T 
+ */
+class ObservableObject{
+    /**
+     * 
+     * @param {T} obj 
+     * @param {null|any} parent
+     */
+    constructor(obj,parent=null){
+        // @ts-ignore
+        obj._isObservable=true
+
+        this._obj=obj
+        /** @type EventFunc[] */
+        this._callbacks=[]
+        this._running=false
+        this._paused=false
+        /** @type any[] */
+        this._deferredChanges=[]
+        this._callbacks_ongoing=false
+        this._paused=false
+
+        this._parent=parent
+
+        let handler = {
+            /**
+             * getter for the proxy object
+             * called on target[property], with receiver being the proxy object
+             * @param {object} target is obj
+             * @param {any} property property name (can be any value, not just strings)
+             * @param {ProxyHandler<object>} receiver is obj._proxy
+             * @returns 
+             */
+            get: (target, property, receiver) => {
+                const val=this.get(property)
+                if(property.startsWith && property.startsWith("_")){
+                    return val
+                }
+
+                if (property === "onChange"){
+                    return this.onChange.bind(this)
+                }
+
+                if(property===Symbol.iterator){
+                    const me=this
+                    return function*(){
+                        for(let key in target){
+                            yield [key,me.get(key)]
+                        }
+                    }
+                }
+
+                if(this.isPubliclyIterableSymbol(property)){
+                    let new_val={}
+                    if(isObject(val)) {
+                        new_val=make_observable(val, this._proxy)
+                    }else{
+                        new_val=make_observable(new ValueObject(val), this._proxy)
+                    }
+                    this.set(property,new_val)
+                }
+
+                // @ts-ignore
+                let ret_val=Reflect.get(this._obj,property,receiver)
+                
+                if((!observable_ret_container) && ret_val._isValueObject){
+                    return ret_val.get()
+                }
+
+                return ret_val
+            },
+            /**
+             * getter for the proxy object
+             * called on target[property]=value
+             * 'this' is the proxy object (obj._proxy)
+             * @param {object} target is obj
+             * @param {string|symbol} property property name (can be any value, not just strings)
+             * @param {any} value
+             * @returns 
+             */
+            set: (target, property, value) => {
+                // dont overwrite setter of private properties
+                // if property is not a number, and starts with _, it is private
+                if(typeof property === 'string' && property.startsWith("_") && !(obj instanceof ValueObject && property==="_value")){
+                    return Reflect.set(target, property, value);
+                }
+
+                let old_value=this.get(property)
+
+                if(!isObject(value)){
+                    value=new ValueObject(value)
+                }
+                
+                value=make_observable(value, this._proxy)
+                let current_target=value
+
+                // if there was an object before, inherit its callbacks
+                if (isObject(old_value) && old_value._callbacks) {
+                    for(let cb of old_value._callbacks){
+                        value.onChange(cb)
+                    }
+                }
+
+                const result = Reflect.set(obj, property, value)
+
+                if(this._paused){
+                    this._deferredChanges=[current_target,property,value,target]
+                    return result;
+                }
+
+                this._applyCallbacks(current_target,property,value,target)
+
+                return result;
+            }
+        };
+
+        this._proxy=new Proxy(obj,handler)
+    }
+
+    /**
+     * register cb to be called when the object changes
+     * @param {EventFunc} cb 
+     * @returns {EventFunc} function handle that removes the callback when called itself
+     */
+    onChange(cb){
+        this._callbacks.push(cb)
+
+        const obj=this
+        return function(){
+            obj._callbacks=obj._callbacks.filter(c=>c!==cb)
+        }
+    }
+
+    /**
+     * 
+     * @param {string|symbol} symbolname
+     * @returns any 
+     */
+    get(symbolname){
+        let descriptor=Object.getOwnPropertyDescriptor(this,symbolname)
+        if(descriptor===undefined){
+            descriptor=Object.getOwnPropertyDescriptor(this._proxy,symbolname)
+            if(descriptor===undefined){
+                return undefined
+            }
+        }
+        return descriptor.value
+    }
+    /**
+     * 
+     * @param {string} symbolname
+     * @param {any} new_value 
+     */
+    set(symbolname,new_value){
+        Object.defineProperty(this,symbolname,{
+            value: new_value,
+            writable: true,
+        })
+    }
+
+    /**
+     * 
+     * @param {string} symbolname 
+     * @returns {boolean}
+     */
+    isPubliclyIterableSymbol(symbolname){
+        if(symbolname.startsWith && symbolname.startsWith("_")){
+            return false
+        }
+
+        // if the attribute is not defined, skip it
+        // @ts-ignore
+        if(!this._obj.hasOwnProperty(symbolname)){
+            return false
+        }
+
+        // if the attribute is callable, skip it
+        if(typeof this.get(symbolname) === 'function'){
+            console.log("symbolname",symbolname,"is callable")
+            return false
+        }
+        console.log(symbolname,"is not callable")
+
+        return true
+    }
+
+
+    /**
+     * trigger callbacks of the object and all its parents
+     * @template {object} C
+     * @param {ObservableObject<C>} current_target object that callbacks are triggered on
+     * @param {any} property property that changed
+     * @param {any} value new value
+     * @param {*} target object that had its property value changed
+     */
+    _applyCallbacks(current_target,property,value,target){
+        // if the value was changed, call all callbacks, then call all callbacks of the parent object, etc.
+        // only propagate the change to parents until an object is hit that has already been changed (rather, that has started propagating changes itself)
+        //
+        // this is still not perfect because it doesn't handle the case where an object is changed twice in the same frame, but it's good enough for now
+        // (the problem is that the value can be changed multiple times, but the callback is only run after the first change)
+        let current_context_callbacks_registered=[]
+        while(current_target){
+            if(current_target._proxy==null || current_target._callbacks_ongoing){
+                break
+            }
+            current_context_callbacks_registered.push(current_target)
+            current_target._callbacks_ongoing=true
+            current_target._callbacks.forEach(cb=>cb(new EventFuncArgument(property, {"value":value, "target":target})))
+            current_target=current_target._parent
+        }
+
+        for(let unroll_target of current_context_callbacks_registered){
+            unroll_target._callbacks_ongoing=false
+        }
+    }
+
+    /**
+     * 
+     * @param {string?} property 
+     * @param {*} value 
+     * @param {*} target 
+     */
+    _trigger(property=null,value=null,target=null){
+        this._applyCallbacks(this,property,value,target)
+    }
+
+    /**
+     * @template T
+     * @param {T} self
+     * @param {(arg0: T) => void} cb 
+     */
+    static _withPaused(self,cb){
+        if(!(self instanceof ObservableObject)){return}
+        self.withPaused(cb)
+    }
+
+    /**
+     * @param {(arg0: T) => void} cb 
+     */
+    withPaused(cb){
+        this._paused=true
+        cb(this._obj)
+        this._paused=false
+        this._trigger(...this._deferredChanges)
+        this._deferredChanges=[]
+    }
+    /**
+     * @param {(cb: T) => T} cb 
+     */
+    with(cb){
+        if(this._obj instanceof ValueObject){
+            let old_val=this._obj._value
+            let new_val=cb(old_val)
+            this._obj._value=new_val
+            this._trigger(undefined,new_val,this._obj)
+        }else{
+            this.withPaused((obj)=>{
+                cb(obj)
+            })
+        }
+    }
+
+    copyRaw(){
+        // this function strips the proxy from the object (and all its attributes, recursively) and returns the raw object
+
+        if(Array.isArray(this._obj)){
+            let raw_arr=[]
+            for(let element of this._obj){
+                if(isObject(element)){
+                    // if the element is observable, copy it recursively
+                    if(!element.copyRaw){
+                        // this creates element._proxy, if it does not exist yet!
+                        element=make_observable(element,this._proxy).copyRaw()
+                    }else{
+                        raw_arr.push(element.copyRaw())
+                    }
+                }else{
+                    raw_arr.push(element)
+                }
+            }
+            return raw_arr
+        }
+
+        /** @type object */
+        let raw_obj={}
+        for(let key in this._obj){
+            if(!this.isPubliclyIterableSymbol(key)){
+                continue
+            }
+
+            let new_value=undefined
+            if(isObject(this.get(key))){
+                new_value=this.get(key).copyRaw()
+            }else{
+                new_value=this.get(key)
+            }
+
+            Object.defineProperty(raw_obj,key,{
+                value: new_value,
+                writable: true,
+            })
+        }
+
+        return raw_obj
+    }
+}
+
+/**
+ * @param{any} obj
+ * @returns {boolean}
+ * */
+function isObservable(obj){
+    return (obj instanceof ObservableObject) || obj._isObservable
+}
+
 /**
  * return a wrapper around an object that makes it observable
  * i.e. allows to register callbacks that are called when the object (or any subvalue) changes
- * @param {any} obj 
+ * 
+ * @template T
+ * 
+ * @param {T} input 
  * @param {null|object} parent 
- * @returns {Proxy}
+ * @returns {T}
  * 
  * @example
  * let c = { grid: { num_x: 2, num_y: 3 } };
@@ -101,219 +475,24 @@ let observable_ret_container=true
  * c.grid['num_z'] = 4; // Triggers the callback
  * 
  */
-function make_observable(obj, parent=null) {
-    if(!isObject(obj)){
-        obj=valueObject(obj)
+function make_observable(input, parent=null) {
+    if(input instanceof ObservableObject && input._proxy){
+        return input
     }
 
-    if(obj.__isObservable){
-        return obj._proxy
+    if(!isObject(input)){
+        /** type{ObservableObject<T>}
+         * @ts-ignore */
+        let ret=make_observable(new ValueObject(input), parent)
+        /// @ts-ignore
+        return ret
     }
 
-    obj._parent=parent
-    obj.__isObservable = true
-    obj._callbacks=[]
-    obj._running=false
+    /// @ts-ignore the input object at this point must be an object
+    let obj=new ObservableObject(input, parent)
 
-    /**
-     * register cb to be called when the object changes
-     * @param {CallableFunction} cb 
-     * @returns {CallableFunction} function handle that removes the callback when called itself
-     */
-    obj.onChange = function(cb){
-        obj._callbacks.push(cb)
-
-        // return a function that removes the callback from the list
-        return function(){
-            obj._callbacks=obj._callbacks.filter(c=>c!==cb)
-        }
-    }
-    function isPubliclyIterableSymbol(symbolname){
-        if(symbolname.startsWith && symbolname.startsWith("_")){
-            return false
-        }
-
-        // if the attribute is callable, skip
-        if(typeof obj[symbolname] === 'function'){
-            return false
-        }
-
-        return true
-    }
-
-    obj.copyRaw=function(){
-        // this function strips the proxy from the object (and all its attributes, recursively) and returns the raw object
-
-        if(obj._isValueObject===true){
-            return obj.value
-        }
-
-        if(Array.isArray(obj)){
-            let raw_arr=[]
-            for(let element of obj){
-                if(isObject(element)){
-                    // if the element is observable, copy it recursively
-                    if(!element.copyRaw){
-                        // this creates element._proxy, if it does not exist yet!
-                        element=make_observable(element,obj._proxy).copyRaw()
-                    }else{
-                        raw_arr.push(element.copyRaw())
-                    }
-                }else{
-                    raw_arr.push(element)
-                }
-            }
-            return raw_arr
-        }
-
-        let raw_obj={}
-        for(let key in obj){
-            if(!isPubliclyIterableSymbol(key)){
-                continue
-            }
-
-            if(isObject(obj[key])){
-                raw_obj[key]=obj._proxy[key].copyRaw()
-            }else{
-                raw_obj[key]=obj[key]
-            }
-        }
-
-        return raw_obj
-    }
-
-    obj._trigger=function(property=undefined,value=undefined,target=undefined){
-        obj._applyCallbacks(obj,property,value,target)
-    }
-
-    obj.withPaused=function(cb){
-        obj._proxy._paused=true
-        cb(obj._proxy)
-        obj._proxy._paused=undefined
-        if(obj._proxy._deferredChanges){
-            obj._trigger(...obj._proxy._deferredChanges)
-        }else{
-            obj._trigger()
-        }
-        obj._proxy._deferredChanges=undefined
-    }
-
-    let handler = {
-        /**
-         * getter for the proxy object
-         * called on target[property], with receiver being the proxy object
-         * @param {object} target is obj
-         * @param {any} property property name (can be any value, not just strings)
-         * @param {ProxyHandler} receiver is obj._proxy
-         * @returns 
-         */
-        get: (target, property, receiver) => {
-            if(property.startsWith && property.startsWith("_")){
-                return obj[property]
-            }
-
-            if(obj._isValueObject){
-                return obj[property]
-            }
-
-            if(isPubliclyIterableSymbol(property)){
-                let val=obj[property]
-                if(isObject(val)) {
-                    obj[property]=make_observable(val, obj._proxy)
-                }else{
-                    obj[property]=make_observable(valueObject(val), obj._proxy)
-                    //window.alert("observable object contains non-observable object"+property+obj[property])
-                }
-            }
-
-            let ret_val=obj[property]
-            
-            if((!observable_ret_container) && ret_val._isValueObject){
-                return ret_val['value']
-            }
-
-            return ret_val
-        },
-        /**
-         * getter for the proxy object
-         * called on target[property]=value
-         * 'this' is the proxy object (obj._proxy)
-         * @param {object} target is obj
-         * @param {any} property property name (can be any value, not just strings)
-         * @param {any} value
-         * @returns 
-         */
-        set: (target, property, value) => {
-            // dont overwrite setter of private properties
-            if(property.startsWith && property.startsWith("_")){
-                return Reflect.set(target, property, value);
-            }
-
-            let old_value=obj._proxy[property]
-
-            let current_target=obj
-
-            if(!isObject(value)){
-                value=valueObject(value)
-            }
-            
-            value=make_observable(value, obj._proxy)
-            current_target=value
-
-            // if there was an object before, inherit its callbacks
-            if (isObject(old_value) && old_value._callbacks) {
-                for(let cb of old_value._callbacks){
-                    value.onChange(cb)
-                }
-            }
-
-            const result = Reflect.set(obj, property, value)
-
-            if(obj._proxy._paused){
-                obj._proxy._deferredChanges=[current_target,property,value,target]
-                return result;
-            }
-
-            obj._applyCallbacks(current_target,property,value,target)
-
-            return result;
-        }
-    };
-
-    let proxy = new Proxy(obj, handler);
-
-    obj._proxy=proxy
-
-    /**
-     * trigger callbacks of the object and all its parents
-     * @param {*} current_target object that callbacks are triggered on
-     * @param {any} property property that changed
-     * @param {*} value new value
-     * @param {*} target object that had its property value changed
-     */
-    obj._applyCallbacks=function(current_target,property,value,target){
-        // if the value was changed, call all callbacks, then call all callbacks of the parent object, etc.
-        // only propagate the change to parents until an object is hit that has already been changed (rather, that has started propagating changes itself)
-        //
-        // this is still not perfect because it doesn't handle the case where an object is changed twice in the same frame, but it's good enough for now
-        // (the problem is that the value can be changed multiple times, but the callback is only run after the first change)
-        let current_context_callbacks_registered=[]
-        while(current_target){
-            if(current_target._proxy==null || current_target._proxy._callbacks_ongoing){
-                break
-            }
-            current_context_callbacks_registered.push(current_target)
-            current_target._proxy._callbacks_ongoing=true
-            current_target._callbacks.forEach(cb=>cb(property, value, target))
-            current_target=current_target._parent
-        }
-
-        for(let unroll_target of current_context_callbacks_registered){
-            unroll_target._proxy._callbacks_ongoing=false
-        }
-    }
-
-    return proxy;
+    /// @ts-ignore
+    return obj
 }
 
 /**
@@ -337,9 +516,14 @@ function getNumDecimalDigits(v){
  */
 function adjustNumDigitsAfterInput(event){
     let event_target=event.currentTarget || event.target
+    if(!event_target){console.error("no event target");return}
+    if(!(event_target instanceof HTMLInputElement)){console.error("event target is not HTMLElement",event_target);return}
 
+    // @ts-ignore
     let min_value=parseFloat(event_target.getAttribute("min"))
+    // @ts-ignore
     let max_value=parseFloat(event_target.getAttribute("max"))
+    // @ts-ignore
     let step_value=parseFloat(event_target.getAttribute("step"))
 
     let current_value=parseFloat(event_target.value)
@@ -356,11 +540,12 @@ function adjustNumDigitsAfterInput(event){
     // only overwrite value if it was changed
     // (otherwise the cursor position would be reset to the end of the input field after every single character input in the field)
     if(value_was_changed){
+        let current_value_str=current_value.toString()
         if(step_value){
             let num_decmial_digits=getNumDecimalDigits(step_value)
-            current_value=current_value.toFixed(num_decmial_digits)
+            current_value_str=current_value.toFixed(num_decmial_digits)
         }
-        event_target.value=current_value
+        event_target.value=current_value_str
     }
 }
 
@@ -372,6 +557,8 @@ function adjustNumDigitsAfterInput(event){
  */
 function adjustInputNumberOnScroll(event){
     let event_target=event.currentTarget || event.target
+    if(!event_target){console.error("no event target");return}
+    if(!(event_target instanceof HTMLInputElement)){console.error("event target is not HTMLElement",event_target);return}
 
     // mimic behaviour of disabled input fields
     let eventTarget_is_disabled=event_target.getAttribute("disabled")
@@ -381,9 +568,9 @@ function adjustInputNumberOnScroll(event){
 
     event.preventDefault()
 
-    let min_value=parseFloat(event_target.getAttribute("min"))
-    let max_value=parseFloat(event_target.getAttribute("max"))
-    let step_value=parseFloat(event_target.getAttribute("step")) || 1
+    let min_value=parseFloat(event_target.getAttribute("min")||"-Infinity")
+    let max_value=parseFloat(event_target.getAttribute("max")||"Infinity")
+    let step_value=parseFloat(event_target.getAttribute("step")||"1")
 
     let current_value=parseFloat(event_target.value)
 
@@ -413,14 +600,16 @@ function adjustInputNumberOnScroll(event){
 }
 /**
  * this function is used to decode html entities in strings
- * e.g. decodeHtml("&lt;") -> "<"
+ * e.g. decodeHtml("\&lt\;") -> "<"
  * @param {string} html
  * @returns {string}
  */
 function decodeHtml(html) {
-    var parser = new DOMParser();
-    var doc = parser.parseFromString(html, 'text/html');
-    return doc.documentElement.textContent;
+    let parser = new DOMParser();
+    let doc = parser.parseFromString(html, 'text/html');
+    let ret=doc.documentElement.textContent;
+    if(ret==null){throw new Error("could not decode html")}
+    return ret
 }
 /**
  * returns an expression tjat expands {{}} expressions using eval
@@ -448,47 +637,53 @@ function expand_expressions(){
 /**
  * retrieve all text nodes from an element (includes any levels of nesting)
  * @param {HTMLElement} elem 
- * @returns {[TextNode]}
+ * @returns {[Text]}
  */
 function getAllTextNodes(elem) {
-    var walker = document.createTreeWalker(elem, NodeFilter.SHOW_TEXT, null, false);
-    var textNodes = [];
-    var node;
+    let walker = document.createTreeWalker(elem, NodeFilter.SHOW_TEXT, null)
+    let textNodes = []
+    let node
 
     while(node = walker.nextNode()) {
-        textNodes.push(node);
+        textNodes.push(node)
     }
 
-    return textNodes;
+    // @ts-ignore
+    return textNodes
 }
 
 /**
  * central object to manage p: bindings and other reactive functionality
  */
 let p={
-    templates:{},
+    /** @type Map<string,HTMLElement> */
+    templates:new Map(),
 
     /** copy values from some tracked javascript object to the dom via element.value
-     *  e.g. <input type="number" p:on-objchange(p.config.value)="value2value" value="1">
-     * @param {object} info
+     *  e.g. <input type="number" p:on-objchange(microscope_config.value)="value2value" value="1">
+     * @param {EventFuncArgument} info
      */
     value2value(info){
         if(info.value && typeof info.value=="object"){
             console.warn("value2value: value is an object, which is invalid",info.value)
             return
         }
+        if(!info.element)return;
+        /// @ts-ignore
         info.element.value=info.value
     },
     /**
      * copy values from some tracked javascript object to the dom via element.checked
-     * e.g. <input type="number" p:on-objchange(p.config.value)="value2value" value="1">
-     * @param {object} info
+     * e.g. <input type="number" p:on-objchange(microscope_config.value)="value2value" value="1">
+     * @param {EventFuncArgument} info
      */
     value2value_checkbox(info){
         if(info.value && typeof info.value=="object"){
             console.warn("value2value: value is an object, which is invalid",info.value)
             return
         }
+        if(!info.element)return;
+        /// @ts-ignore
         info.element.checked=info.value
     },
     /**
@@ -509,9 +704,10 @@ let p={
             // If the element is intersecting with the viewport (i.e., it's visible)
             if(entry.isIntersecting) {
                 let element=entry.target
+                if(!(element instanceof HTMLElement)){console.error("element not HTMLElement");return}
 
-                for(let init_vis_func of element._p.init_vis_funcs){
-                    init_vis_func(entry.target)
+                for(let init_vis_func of p.ensure_elp(element).init_vis_funcs){
+                    init_vis_func(element)
                 }
 
                 p.observer_first_draw.unobserve(element); // Stop observing this element
@@ -526,6 +722,8 @@ let p={
         mutations.forEach((mutation)=>{
             if(mutation.type=="childList"){
                 for(let node of mutation.addedNodes){
+                    if(!(node instanceof HTMLElement))continue
+
                     p.init(node,true)
                 }
             }
@@ -534,6 +732,7 @@ let p={
     observer_delta_vis:new IntersectionObserver((entries) => {
         entries.forEach(entry => {
             let element=entry.target
+            if(!(element instanceof HTMLElement)){console.error("element not HTMLElement");return}
 
             // false-y can be null or false
             let element_is_visible=element.getAttribute('_visible')=='true'
@@ -543,17 +742,17 @@ let p={
             if(entry.isIntersecting){
                 if(!element_is_visible){
                     visibility_has_changed=true
-                    element.setAttribute('_visible',true)
+                    element.setAttribute('_visible',"true")
                 }
             }else{
                 if(element_is_visible){
                     visibility_has_changed=true
-                    element.setAttribute('_visible',false)
+                    element.setAttribute('_visible',"false")
                 }
             }
 
             if(visibility_has_changed){
-                for(let vis_change_change of element._p.vis_change_funcs){
+                for(let vis_change_change of p.ensure_elp(element).vis_change_funcs){
                     vis_change_change(entry)
                 }
             }
@@ -561,9 +760,9 @@ let p={
     }),
     /**
      * return the image data of an image element (as array of pixel values)
-     * @param {ImageElement} img_element 
+     * @param {CanvasImageSource & {height:number,width:number}} img_element 
      * @param {boolean} also_return_canvas 
-     * @returns {ImageData|[ImageData,HTMLCanvasElement,CanvasRenderingContext2D]}
+     * @returns {[ImageData]|[ImageData,HTMLCanvasElement,CanvasRenderingContext2D]}
      */
     get_img_data(img_element,also_return_canvas=false){
         const canvas = document.createElement('canvas');
@@ -572,6 +771,7 @@ let p={
     
         // Draw the image on canvas
         const ctx = canvas.getContext('2d');
+        if(!ctx){console.error("could not get 2d context");throw new Error("could not get 2d context")}
         ctx.drawImage(img_element, 0, 0);
     
         // Extract image data
@@ -581,16 +781,20 @@ let p={
             return [imageData,canvas,ctx]
         }
 
-        return imageData
+        return [imageData]
     },
 
+    /**
+     * 
+     * @param {KeyboardEvent} event 
+     */
     save_config_on_ctrlcmd_s(event){
         /// event triggered by pressing ctrl/cmd+s (save current config as file)
 
         if ((event.ctrlKey || event.metaKey) && event.key === 's') {
             event.preventDefault()
             
-            let config_data_to_download=p.config.copyRaw()
+            let config_data_to_download=microscope_config.copyRaw()
 
             let config_data_blob=new Blob([JSON.stringify(config_data_to_download)],{type:"application/json"})
 
@@ -619,48 +823,59 @@ let p={
      * time after pointer leaves p:tooltip element before the tooltip is hidden
      */
     tooltip_time_to_hide_ms:300.0,
+    /** tooltip elements for the target element (every element with a tooltop may have its own tooltip element) */
+    tooltipElementforTarget:new Map(),
+    /** @type {number|undefined} */
+    tooltip_timer_to_visible:undefined,
     /**
      * callback that is triggered upon pointer entering a p:tooltip element
-     * @param {PointerEvent} event 
+     * @param {Event} event 
      * @param {boolean} skip_timeout 
      * @returns 
      */     
     tooltip_begin(event,skip_timeout=false){
         let event_target=event.currentTarget
-        let tooltip_el=event_target.tooltip_element
+        if(!(event_target instanceof HTMLElement)){console.error("no event target");throw new Error("no event target")}
+        let tooltip_el=this.tooltipElementforTarget.get(event_target)
         if(!tooltip_el){
-            if(!this.templates.tooltip){
+            let tooltip_template=this.templates.get("tooltip")
+            if(!tooltip_template){
                 console.error("global tooltip template not found")
                 return
             }
 
-            tooltip_el=this.templates.tooltip.cloneNode(true).children[0]
+            /// @ts-ignore
+            tooltip_el=tooltip_template.cloneNode(true).children[0]
 
             let tooltip_text=event_target.getAttribute("p:tooltip")
+            if(!tooltip_text){console.error(event_target,"tooltip element has no tooltip text");return}
             // if tooltip references a whole element, use its innerHTML as tooltip text, and remove that element from its parent
             if(tooltip_text.startsWith("#")){
                 let tooltip_text_element=document.querySelector(tooltip_text)
+                if(!tooltip_text_element){console.error("tooltip text element not found",tooltip_text);return}
                 tooltip_el.innerHTML=tooltip_text_element.innerHTML
 
-                tooltip_text_element.parentElement.removeChild(tooltip_text_element)
+                if(tooltip_text_element.parentElement)
+                    tooltip_text_element.parentElement.removeChild(tooltip_text_element)
                 tooltip_text_element.classList.add("processed")
             }else{
                 tooltip_el.innerHTML=tooltip_text
             }
 
             tooltip_el.element_anker=event_target
-            event_target.tooltip_element=tooltip_el
+
+            this.tooltipElementforTarget.set(event_target,tooltip_el)
         }
 
         function clear_timers_to_visible(){
             if(this.tooltip_timer_to_visible){
                 clearTimeout(this.tooltip_timer_to_visible)
-                this.tooltip_timer_to_visible=null
+                this.tooltip_timer_to_visible=undefined
             }
 
             if(tooltip_el.timer_to_visible){
                 clearTimeout(tooltip_el.timer_to_visible)
-                tooltip_el.timer_to_visible=null
+                tooltip_el.timer_to_visible=undefined
             }
         }
 
@@ -672,7 +887,7 @@ let p={
 
             if(this.tooltip_timer_to_visible!==tooltip_el.timer_to_visible){
                 clearTimeout(this.tooltip_timer_to_visible)
-                this.tooltip_timer_to_visible=null
+                this.tooltip_timer_to_visible=undefined
             }
 
             // event.currentTarget is null inside the timeout, so we need to save it here
@@ -680,13 +895,15 @@ let p={
 
             // start timer where if the pointer is hovered over the element for this long, the tooltip is displayed
             tooltip_el.timer_to_visible=setTimeout(function(){
+                /// @ts-ignore
                 p.tooltip_begin(escaping_event,true)
             },this.tooltip_time_to_display_ms)
             this.tooltip_timer_to_visible=tooltip_el.timer_to_visible
 
             // disable the timer if the pointer leaves the element
             // (and remove the event listener, so it doesn't get called multiple times)
-            function onmouseleave(event){
+            function onmouseleave(){
+                if(!event_target){console.error("no event target");return}
                 event_target.removeEventListener("mouseleave",onmouseleave)
                 clear_timers_to_visible()
             }
@@ -704,28 +921,33 @@ let p={
 
         this.active_tooltip=tooltip_el
     },
+    /** @type undefined|null|HTMLElement */
+    active_tooltip:undefined,
     /**
      * this is called when the mouse leaves the element where the tooltip was triggered
-     * @param {PointerEvent} event
+     * @param {Event} event
      * @returns
      */
     tooltip_end(event){
-        if(this.active_tooltip!==event.currentTarget.tooltip_element){
+        if(!event.currentTarget){throw new Error("no tooltip element")}
+        let tooltip_el=this.tooltipElementforTarget.get(event.currentTarget)
+        if(this.active_tooltip!==tooltip_el){
             return
         }
 
-        let tooltip_el=event.currentTarget.tooltip_element
         tooltip_el.visibility_timer=setTimeout((() => {
             this.tooltip_cancel(tooltip_el)
         }).bind(this), this.tooltip_time_to_hide_ms);
     },
+    tooltipVisibilityTimers:new Map(),
     /**
      * remove active tooltip from display
      * @param {HTMLElement} tooltip_el 
      */
     tooltip_cancel(tooltip_el){
-        clearTimeout(tooltip_el.visibility_timer)
-        tooltip_el.visibility_timer=null
+        
+        clearTimeout(this.tooltipVisibilityTimers.get(tooltip_el))
+        this.tooltipVisibilityTimers.delete(tooltip_el)
 
         if(tooltip_el.parentElement){
             tooltip_el.parentElement.removeChild(tooltip_el)
@@ -737,36 +959,79 @@ let p={
     },
 
     /**
+     * map for additional attributes on an element used by this framework
+     */
+    elp:new Map(),
+    /**
+     * register a callback that is triggered when an observable object changes
+     * @param {HTMLElement} el
+     * @return {{
+     *   pBindApplied: boolean,
+     *   bindings: Binding[],
+     *   pForInitialized: boolean,
+     *   pForElements: [HTMLElement,Binding[]][],
+     *   _destroy: null|(()=>void),
+     *   _liveCallbacks: EventFunc[],
+     *   vis_change_funcs: ((arg?:IntersectionObserverEntry)=>void)[],
+     *   init_vis_funcs: ((arg:HTMLElement)=>void)[],
+     * }}
+     */
+    ensure_elp(el){
+        if(!this.elp.has(el)){
+            let elp_info={
+                pBindApplied:false,
+                bindings:[],
+                pForInitialized:false,
+                pForElements:[],
+                _destroy:null,
+                _liveCallbacks:[],
+                vis_change_funcs:[],
+                init_vis_funcs:[],
+            }
+            this.elp.set(el,elp_info)
+            return elp_info
+        }
+        return this.elp.get(el)
+    },
+
+    /**
      * init p:bind functionality for an element
      * @param {HTMLElement} el 
-     * @param {string} obj_bind 
-     * @param {[{bindname:bindingValue}]} additional_bindings 
+     * @param {string|undefined} obj_bind_in 
+     * @param {Binding[]} additional_bindings 
      * @returns 
      */
-    apply_pbind(el,obj_bind=undefined,additional_bindings=[]){
-        if(el._pbindApplied==true){
+    apply_pbind(el,obj_bind_in=undefined,additional_bindings=[]){
+        let el_info=this.ensure_elp(el)
+        if(el_info && el_info.pBindApplied){
             console.log("p:bind already applied",el)
             return
         }
 
-        if(el._bindings){
-            additional_bindings=additional_bindings.concat(el._bindings)
+        el_info.pBindApplied=true
+
+        if(el_info.bindings){
+            additional_bindings=additional_bindings.concat(el_info.bindings)
         }
 
         for(let binding of additional_bindings){
             eval("var "+binding.bindname+"=binding.value")
         }
 
-        el._pbindApplied=true
-        if(obj_bind==undefined){
-            obj_bind=el.getAttribute("p:bind")
+        let obj_bind=""
+        let el_pbind=el.getAttribute("p:bind")
+        if(obj_bind_in!==undefined){
+            obj_bind=obj_bind_in
+        }else if(el_pbind){
+            obj_bind=el_pbind
         }
-        if(!(obj_bind && obj_bind.length>0)){
+
+        if(obj_bind.length==0){
             return
         }
 
         let obj=eval(obj_bind)
-        if(!obj.__isObservable){
+        if(!isObservable(obj)){
             window.alert("obj_bind not observable '"+obj_bind+"'")
             return
         }
@@ -779,6 +1044,7 @@ let p={
 
             if(el.getAttribute("type")=="checkbox"){
                 el.addEventListener("change",function(ev){
+                    /// @ts-ignore
                     obj._parent[key]=ev.target.checked
                 })
 
@@ -792,6 +1058,7 @@ let p={
                 }
 
                 el.addEventListener(event_type,function(ev){
+                    /// @ts-ignore
                     obj._parent[key]=ev.target.value
                 })
 
@@ -806,11 +1073,11 @@ let p={
     /**
      * init p:for functionality for an element
      * @param {HTMLElement} el 
-     * @param {string} for_clause 
-     * @param {[{bindname:bindingValue}]} additional_bindings 
+     * @param {string|null} for_clause 
+     * @param {Binding[]} additional_bindings 
      * @returns 
      */
-    apply_pfor(el,for_clause=undefined,additional_bindings=[]){
+    apply_pfor(el,for_clause=null,additional_bindings=[]){
         if(for_clause==undefined){
             for_clause=el.getAttribute("p:for")
         }
@@ -819,9 +1086,8 @@ let p={
             return
         }
 
-        if(el._bindings){
-            additional_bindings=additional_bindings.concat(el._bindings)
-        }
+        let el_info=this.ensure_elp(el)
+        additional_bindings=additional_bindings.concat(el_info.bindings)
 
         for(let binding of additional_bindings){
             eval("var "+binding.bindname+"=binding.value")
@@ -839,21 +1105,24 @@ let p={
         container=eval(container_expression)
 
         // initialize container exactly once
-        if(!el._pForInitialized){
-            el._pForInitialized=true
+        if(!el_info.pForInitialized){
+            el_info.pForInitialized=true
 
             // if the container is observable, register a callback to update the elements when the container changes
-            if(container.__isObservable){
-                let el_cb=this.register_objchange_callback(container,function(property,newval,obj){
+            if(isObservable(container)){
+                let el_cb=this.register_objchange_callback(container,function(info){
                     // when the container changes, remove all previously created elements
-                    if(el._pForInitialized===true){
-                        for(let [old_child,_old_child_bindings] of el._pForElements){
-                            if(old_child._destroy){
-                                old_child._destroy()
+                    if(el_info.pForInitialized===true){
+                        for(let [old_child,_old_child_bindings] of el_info.pForElements){
+                            let old_child_pinfo=p.ensure_elp(old_child)
+                            if(old_child_pinfo._destroy){
+                                old_child_pinfo._destroy()
                             }
-                            old_child.parentElement.removeChild(old_child)
+                            if(old_child.parentElement){
+                                old_child.parentElement.removeChild(old_child)
+                            }
                         }
-                        el._pForElements=[]
+                        el_info.pForElements=[]
                     }
 
                     // then generated new elements
@@ -863,8 +1132,8 @@ let p={
 
                 // save the callback to be called when the element is destroyed
                 // (removes the callback set above so that it is not called on an object removed from the dom)
-                el._liveCallbacks=el._liveCallbacks || []
-                el._liveCallbacks.push(el_cb)
+                if(!el_cb) return
+                el_info._liveCallbacks.push(el_cb)
             }
         }
 
@@ -872,6 +1141,7 @@ let p={
             return
         }
 
+        /** @type {[HTMLElement,Binding[]][]} */
         let new_elements=[]
 
         for(let item of container){
@@ -898,29 +1168,35 @@ let p={
         }
 
         for(let [new_element,_] of new_elements){
+            if(!el.parentElement){console.error("no parent element for",el);return}
             el.parentElement.insertBefore(new_element,el);
         }
 
         // trigger init functions for all new elements
         for(let [new_element,bindings] of new_elements){
-            new_element._bindings=bindings
+            let pinfo=p.ensure_elp(new_element)
+            pinfo.bindings=bindings
             // TODO this should not be required, but the init code is usually only applied to elements with the data class, which these might not have
             p.init(new_element,true,bindings)
         }
 
-        el._pForElements=new_elements
-        el._destroy=function(){
-            for(let [old_child,_old_child_bindings] of el._pForElements){
-                if(old_child._destroy){
-                    old_child._destroy()
+        el_info.pForElements=new_elements
+        el_info._destroy=function(){
+            for(let [old_child,_old_child_bindings] of el_info.pForElements){
+                let old_child_pinfo=p.ensure_elp(old_child)
+                if(old_child_pinfo._destroy){
+                    old_child_pinfo._destroy()
                 }
-                old_child.parentElement.removeChild(old_child)
+                if(old_child.parentElement){
+                    old_child.parentElement.removeChild(old_child)
+                }
             }
             // call all live callbacks
             // i.e. functions to unhook existing callbacks from the observable object
-            if(el._liveCallbacks){
-                for(let cb of el._liveCallbacks){
-                    cb()
+            if(el_info._liveCallbacks){
+                for(let cb of el_info._liveCallbacks){
+                    /// @ts-ignore
+                    cb({})
                 }
             }
         }
@@ -940,18 +1216,20 @@ let p={
             }
 
             // remove template from DOM
-            template.parentElement.removeChild(template)
+            if(template.parentElement){
+                template.parentElement.removeChild(template)
+            }
 
             // save for later use
-            this.templates[template_name]=template.content
+            this.templates.set(template_name,template.content)
         }
     },
 
     /**
      * perform initialization of a subtree
-     * @param {Node} subtree 
+     * @param {HTMLElement} subtree 
      * @param {boolean} include_root 
-     * @param {[{bindname:bindingValue}]} additional_bindings 
+     * @param {Binding[]} additional_bindings 
      * @returns 
      */
     init_node(subtree,include_root=false,additional_bindings=[]){
@@ -961,14 +1239,18 @@ let p={
 
         this.liftTemplates(subtree)
 
-        additional_bindings=additional_bindings.concat(subtree._bindings || [])
+        let subtree_pinfo=this.ensure_elp(subtree)
+        additional_bindings=additional_bindings.concat(subtree_pinfo.bindings)
 
         for(let binding of additional_bindings){
             eval("var "+binding.bindname+"=binding.value")
         }
 
+        // init subnodes with data attribute first
         if(!(include_root && subtree.classList.contains("data"))){
             for(let element of subtree.querySelectorAll(".data")){
+                if(!(element instanceof HTMLElement))continue
+
                 // if a parent any number of levels up has the data class, do not initialize here (TODO this is not true)
                 let closestDataParent=element.closest(".data")
                 if(
@@ -988,14 +1270,13 @@ let p={
         }
 
         // process elements
+        let el_pinfo=this.elp.get(subtree)
         let element=subtree
         let el=element
 
-        if(element._p && element._p.init_done===true){
+        if(el_pinfo.init_done===true){
             return
         }
-
-        element._p={}
 
         let calls=[]
 
@@ -1006,7 +1287,7 @@ let p={
                 eval(initExec)
             }
 
-            calls.push([init_func,[element]])
+            calls.push(()=>{init_func();})
         }
 
         let tooltip_text=element.getAttribute("p:tooltip")
@@ -1014,6 +1295,45 @@ let p={
             element.classList.add("has-tooltip")
             element.addEventListener("mouseenter",this.tooltip_begin)
             element.addEventListener("mouseleave",this.tooltip_end)
+        }
+
+        for(let child of element.childNodes){
+            let raw_text=child.textContent
+            if(!raw_text)
+                continue;
+            if(child.nodeName=="#text" && raw_text){
+                // create list of matches for text within {{}}, including position of match to make splicing easier later
+                let matches=[...raw_text.matchAll(/{{(.*?)}}/g)].reverse()
+                if(matches.length==0){
+                    continue
+                }
+                function replace(){
+                    if(!raw_text)return;
+                    let new_text=raw_text
+                    for(let match of matches){
+                        /**
+                         * @template T
+                         * @param {T} v
+                         * @return {string}
+                         */
+                        function getInnerValue(v){
+                            if(isObservable(v)){
+                                /// @ts-ignore
+                                return ""+v._obj.valueOf()
+                            }
+                            return ""+v
+                        }
+                        let val=getInnerValue(eval(match[1]))
+                        new_text=new_text.slice(0,match.index)+val+new_text.slice(match.index+match[0].length)
+                    }
+                    child.textContent=new_text
+                }
+                // print start and end index of each match
+                for(let match of matches){
+                    let cb_obj=eval(match[1])
+                    this.register_objchange_callback(cb_obj,replace,element,true)
+                }
+            }
         }
 
         // call order:
@@ -1026,14 +1346,14 @@ let p={
 
         let for_clause=element.getAttribute("p:for")
         if(for_clause){
-            calls.splice(0,0,[this.apply_pfor,[element,for_clause,additional_bindings]])
+            calls.splice(0,0,function(){p.apply_pfor(element,for_clause,additional_bindings);})
         }
 
         let initVisExec=element.getAttribute("p:init-vis")
         if(initVisExec){
-            element._p.init_vis_funcs=[]
+            el_pinfo.init_vis_funcs=[]
 
-            element._p.init_vis_funcs.push(function(){
+            el_pinfo.init_vis_funcs.push(function(){
                 // may take 'element' as argument
                 eval(initVisExec)
             })
@@ -1064,14 +1384,15 @@ let p={
                             eval(onEventExec)
                         })
                     }else if(event_name.startsWith("vis-change")){
-                        if(element._p.vis_change_funcs==null){
-                            element._p.vis_change_funcs=[]
+                        if(el_pinfo.vis_change_funcs==null){
+                            el_pinfo.vis_change_funcs=[]
                         }
-                        element._p.vis_change_funcs.push(function(){
+                        el_pinfo.vis_change_funcs.push(function(){
                             eval(onEventExec)
                         })
                         p.observer_delta_vis.observe(element)
                     }else if(event_name.startsWith("objchange")){
+                        if(extended_event_name==null)throw new Error("")
                         let obj_list_string=extended_event_name.replace("objchange(","").replace(")","")
                         let obj_list=obj_list_string.split(",")
 
@@ -1081,10 +1402,12 @@ let p={
                             },element,true)
                         }
                     }else if(event_name.startsWith("attrchange")){
+                        if(extended_event_name==null)throw new Error("")
                         let attribute_list=extended_event_name.replace("attrchange(","").replace(")","").split(",")
                         let attribute_change_observer=new MutationObserver(function(mutationsList, observer){
                             mutationsList.forEach(mutation=>{
                                 if(mutation.type==="attributes"){
+                                    if(mutation.attributeName==null)return;
                                     if(attribute_list.includes(mutation.attributeName)){
                                         console.error("not currently implemented")
                                         //p[event_func_name](mutation.target)
@@ -1103,8 +1426,8 @@ let p={
         }
 
         // apply all the calls
-        for(let [func,args] of calls){
-            func(...args)
+        for(let func of calls){
+            func()
         }
 
         // init all children
@@ -1112,9 +1435,7 @@ let p={
         
         let obj_bind=element.getAttribute("p:bind")
         if(obj_bind){
-            calls.push([this.apply_pbind,[element,obj_bind,additional_bindings]])
-            let [func,args]=calls.pop()
-            func(...args)
+            this.apply_pbind(element,obj_bind,additional_bindings)
         }
 
         // for all text nodes that contain {{}} expressions, expand them
@@ -1122,7 +1443,7 @@ let p={
             textNode.data=eval('textNode.data'+expand_expressions());
         }
 
-        element._p.init_done=true
+        el_pinfo.init_done=true
 
         //make all number input fields adhere to their min/max values during input and allow using scroll to adjust their values
         let subtree_with_input_tag=[]
@@ -1138,34 +1459,39 @@ let p={
                 element.addEventListener("input",adjustNumDigitsAfterInput)
 
                 let wheel_adjust=element.getAttribute("wheel-adjust")
-                if(wheel_adjust==null || wheel_adjust==true){
+                if(Boolean(wheel_adjust)===true){
                     element.addEventListener("wheel", adjustInputNumberOnScroll, {passive: false})
                 }
             }
         }
     },
 
+    init_done:false,
     /**
      * init p: functionality for a subtree
-     * @param {Node} subtree 
+     * @param {HTMLElement|Document} subtree 
      * @param {boolean} include_root 
-     * @param {[{bindname:bindingValue}]} additional_bindings 
+     * @param {Binding[]} additional_bindings 
      */
     init(subtree=document,include_root=false,additional_bindings=[]){
+        /// @ts-ignore
         this.init_node(subtree,include_root,additional_bindings)
 
-        this.observer_add_to_dom.observe(document.body,{attributes:false,childList:true,characterData:false,subtree:true})
+        if(subtree===document){
+            this.observer_add_to_dom.observe(document.body,{attributes:false,childList:true,characterData:false,subtree:true})
 
-        this.init_done=true
+            this.init_done=true
+        }
     },
 
     /**
      * register event_func to be called on element when obj changes
-     * @param {Object} obj 
-     * @param {CallableFunction} event_func 
+     * @template T
+     * @param {ObservableObject<T>} obj 
+     * @param {EventFunc} event_func 
      * @param {HTMLElement} element 
      * @param {boolean} initNowWithCurrentValue
-     * @returns {null|CallableFunction} function that removes the callback from the list
+     * @returns {null|EventFunc} function that removes the callback from the list
      */
     register_objchange_callback(obj,event_func,element,initNowWithCurrentValue=false){
         // when obj changes, call event_func, referencing the element/domnode
@@ -1174,16 +1500,20 @@ let p={
         if(obj==undefined){
             console.error("objchange: object not found")
             window.alert("objchange: object not found")
-            return
+            return null
         }
 
-        if(!obj.__isObservable){
+        if(!isObservable(obj)){
             console.error("objchange: object not observable",obj)
             window.alert("objchange: object not observable")
-            return
+            return null
         }
 
-        let cb_handle=(property, value, target) => {
+        /**
+         * @type {EventFunc}
+         */
+        const cb_handle=function(info){
+            let [property, value, target]=[info.property,info.value,info.target]
             try{
                 value=value.valueOf()
             }catch(e){}
@@ -1199,7 +1529,7 @@ let p={
         let cb_remove_func=obj.onChange(cb_handle);
 
         if(initNowWithCurrentValue===true){
-            cb_handle(undefined,obj,obj)
+            cb_handle({property:null,value:obj,target:obj,currentTarget:null,element:element})
         }
 
         return cb_remove_func
@@ -1208,12 +1538,15 @@ let p={
 
 // initialize p: functionality once the dom is loaded
 document.addEventListener("DOMContentLoaded",function(){
-    window.p=p
     for(let key in p){
+        /// @ts-ignore
         if(typeof p[key] === 'function'){
+            /// @ts-ignore
             p[key]=p[key].bind(p)
         }
-        if(p[key]._observable){
+        /// @ts-ignore
+        if(p[key] && isObservable(p[key])){
+            /// @ts-ignore
             p[key]=make_observable(p[key])
         }
     }
