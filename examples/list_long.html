@@ -1,0 +1,26 @@
+<html>
+    <head>
+        <script src="../p2.js"></script>
+        <script>
+            let _p=new Manager()
+        </script>
+    </head>
+    <body>
+        <script>
+            let longlist_outer=[]
+            for(let i=0;i<100;i++){
+                let innerlist=[]
+                for(let j=0;j<100;j++){
+                    innerlist.push({value:i*100+j})
+                }
+                longlist_outer.push(innerlist)
+            }
+            let longlist=_p.manage(longlist_outer)
+        </script>
+        <template class="data" p:for="innerlist of longlist">
+            <template class="data" p:for="item of innerlist">
+                <div>long list {{item.value}}</div>
+            </template>
+        </template>
+    </body>
+</html>

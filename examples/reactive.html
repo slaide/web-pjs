@@ -1,14 +1,17 @@
 <html>
     <head>
-        <script src="../p.js"></script>
+        <script src="../p2.js"></script>
+        <script>
+            let _p=new Manager()
+        </script>
     </head>
     <body>
         <script>
-            var times = make_observable(0);
+            let times = _p.manage({v:0})
             function onclick() {
-                times.with(v=>v+1)
+                times.v++
             }
         </script>
-        <button class="data" p:on-click="onclick()">clicked {{times}} times</button>
+        <button class="data" p:on-click="onclick()">clicked {{times.v}} times</button>
     </body>
 </html>

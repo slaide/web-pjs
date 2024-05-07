@@ -1,0 +1,28 @@
+<html>
+    <head>
+        <script src="../p2.js"></script>
+        <script>
+            let _p=new Manager()
+        </script>
+    </head>
+    <body>
+        <script>
+            let list = _p.manage([{value:2},{value:3},{value:5}])
+        </script>
+        <template class="data" p:for="item of list">
+            <div>upper list {{item.value}}</div>
+        </template>
+        <script>
+            let nestedlist = _p.manage([
+                {title:"first",values:[{number:2},{number:3},{number:5}]},
+                {title:"second",values:[{number:7},{number:11},{number:13}]},
+            ])
+        </script>
+        <template class="data" p:for="list2 of nestedlist">
+            <div><b>{{list2.title}}</b></div>
+            <template class="data" p:for="item of list2.values">
+                <div>lower list {{item.number}}</div>
+            </template>
+        </template>
+    </body>
+</html>

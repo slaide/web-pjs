@@ -1,0 +1,63 @@
+
+<html>
+    <head>
+        <script src="../p2.js"></script>
+        <script>
+            let _p=new Manager()
+        </script>
+    </head>
+    <body>
+        <script>
+            const valuelist=_p.manage([
+                {
+                    title:"group 1",
+                    values:[
+                        {
+                            group:0,
+                            pos:0,
+                            name:"value 1",
+                        },{
+                            group:0,
+                            pos:1,
+                            name:"value 2",
+                        }
+                    ],
+                },
+                {
+                    title:"group 2",
+                    values:[
+                        {
+                            group:1,
+                            pos:0,
+                            name:"value 21",
+                        },{
+                            group:1,
+                            pos:1,
+                            name:"value 22",
+                        }
+                    ],
+                },
+            ])
+            function moveup(c,ta){
+                // switch with previous
+                if(ta>0){
+                    let temp=valuelist[c].values[ta]
+                    valuelist[c].values[ta]=valuelist[c].values[ta-1]
+                    valuelist[c].values[ta-1]=temp
+                    // adjust pos
+                    valuelist[c].values[ta].pos=ta
+                    valuelist[c].values[ta-1].pos=ta-1
+                }
+            }
+        </script>
+        <template class="data" p:for="c of valuelist">
+            <div>
+                <div>{{c.title}}</div>
+                <template class="data" p:for="v of c.values">
+                    <div>{{v.name}}</div>
+                    <button class="data" p:on-click="moveup(v.group,v.pos)">move up</button>
+                </template>
+            </div>
+        </template>
+    </body>
+</html>
