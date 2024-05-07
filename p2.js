@@ -374,7 +374,7 @@ class Manager{
      * @template {object} T
      * @param {T|Proxy<T>} obj 
      * @param {((o:object,property:string|symbol,new_value:any)=>void)[]} inheritedCallbacks
-     * @returns {Proxy<T>}
+     * @returns {T}
      */
     ensureManagedObject(obj,inheritedCallbacks=[]){
         // if object argument is proxy, return
@@ -433,7 +433,7 @@ class Manager{
      * @brief manage an object, wrapper for a more complex (internal) function
      * @template T
      * @param {T&object} obj 
-     * @returns {Proxy<T>}
+     * @returns {T}
      */
     manage(obj){
         return this.ensureManagedObject(obj)
