@@ -536,7 +536,6 @@ class Manager{
                 let container=this.ensureManagedObject(eval(bindings_in.expand("bindings_in")+container_name))
                 
                 const applyPFor=(()=>{
-                    console.log("applying pfor to",element,"with container",container)
                     for(let cb of remove_callbacks){
                         cb()
                     }
@@ -604,9 +603,8 @@ class Manager{
                 eval(bindings.expand("bindings")+p_init_attribute)
             }
 
-            // handle p:bind, p:read, p:write attributes
+            // handle p:bind attributes
             const p_bind_attribute=element.getAttribute("p:bind")
-
             while(p_bind_attribute){
                 const elementIsInput=element instanceof HTMLInputElement
                 const elementIsSelect=element instanceof HTMLSelectElement
@@ -618,38 +616,52 @@ class Manager{
                 const eval_stack=EvalStack.end()
                 if(eval_stack.length==0 || eval_stack[0].length==0){
                     console.error("no eval stack. maybe object is not managed?",element,p_bind_attribute)
+                    break
                 }
 
+                let elementValuePropertyName
                 if(elementIsCheckbox){
                     element.checked=initial_value
+                    elementValuePropertyName="checked"
                 }else{
                     element.value=initial_value
+                    elementValuePropertyName="value"
                 }
 
-                this.registerCallback(eval_stack[0][0],(o,p,n)=>{
-                    let bindings=Bindings.getForElement(element)
-                    let bindings_str=bindings.expand("bindings")
+                /**
+                 * block recursion, e.g.:
+                 * 
+                 * ... -> element value change -> js value changes -> element value changes -> ...
+                 * */
+                let writeInputValueBack=false
 
-                    let newValue=eval(bindings_str+p_bind_attribute)
-                    if(elementIsCheckbox){
-                        // set checkmark value of checkbox element
-                        element.checked = newValue
-                    }else{
-                        // set value of input element
-                        element.value = newValue
-                    }
+                // register callback to reflect js value changes in DOM
+                this.registerCallback(eval_stack[0][0],(o,p,n)=>{
+                    if(writeInputValueBack){return;}
+
+                    const bindings=Bindings.getForElement(element)
+                    const bindings_str=bindings.expand("bindings")
+
+                    // set new value on input element
+                    eval(bindings_str+"element."+elementValuePropertyName+"="+p_bind_attribute)
                 },eval_stack[0][1])
 
-                element.addEventListener("input",()=>{
-                    let bindings=Bindings.getForElement(element)
-                    let bindings_str=bindings.expand("bindings")
+                // register callback to reflect DOM value changes in js
+                element.addEventListener("input",(event)=>{
+                    writeInputValueBack=true
 
-                    eval(bindings_str+p_bind_attribute+"=element.value")
+                    const bindings=Bindings.getForElement(element)
+                    const bindings_str=bindings.expand("bindings")
+
+                    eval(bindings_str+p_bind_attribute+"=element."+elementValuePropertyName)
+
+                    writeInputValueBack=false
                 })
 
                 break
             }
 
+            // handle p:on-* attributes, e.g. p:on-click="..."
             for(let attributeIndex=0;attributeIndex<element.attributes.length;attributeIndex++){
                 let attribute=element.attributes.item(attributeIndex)
                 if(!attribute)continue;
