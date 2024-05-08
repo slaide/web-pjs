@@ -292,6 +292,11 @@ class Manager{
         this.namedObjCallbacks=new Map()
         /** @type {Set<HTMLElement>} */
         this.initializedElements=new Set()
+
+        /** @type {Map<HTMLElement,(()=>void)[]>} */
+        this._firstDrawCallbacks=new Map()
+        /** @type {Set<HTMLElement>} */
+        this._firstDrawCompleted=new Set()
     }
     /**
      * 
@@ -499,6 +504,43 @@ class Manager{
             callback(property,new_value)
         }
     }
+
+    /**
+     * 
+     * @param {HTMLElement} element 
+     * @param {()=>void} cb 
+     */
+    _onFirstDraw(element,cb){
+        if(this._firstDrawCompleted.has(element)){
+            cb()
+            return
+        }
+
+        if(!this._firstDrawCallbacks.has(element)){
+            this._firstDrawCallbacks.set(element,[])
+
+            // on first draw, via intersectionobserver, call all callbacks
+            const observer=new IntersectionObserver((entries,observer)=>{
+                for(let entry of entries){
+                    if(entry.isIntersecting){
+                        this._firstDrawCompleted.add(element)
+
+                        let callbacks=this._firstDrawCallbacks.get(element)
+                        if(callbacks){
+                            for(let cb of callbacks){
+                                cb()
+                            }
+
+                            this._firstDrawCallbacks.delete(element)
+                        }
+                        observer.disconnect()
+                    }
+                }
+            })
+            observer.observe(element)
+        }
+        this._firstDrawCallbacks.get(element)?.push(cb)
+    }
     /**
      * 
      * @param {Element[]|HTMLCollection} target_elements
@@ -532,6 +574,7 @@ class Manager{
             const p_for_attribute=element.getAttribute("p:for")
             if(p_for_attribute){
                 let [item_name,container_name]=p_for_attribute.split(" of ")
+                if(!container_name){console.error("invalid p:for attribute",p_for_attribute);continue;}
 
                 let container=this.ensureManagedObject(eval(bindings_in.expand("bindings_in")+container_name))
                 
@@ -601,6 +644,17 @@ class Manager{
                 // add local variable "element"
                 bindings.add(new Binding("element",element))
                 eval(bindings.expand("bindings")+p_init_attribute)
+            }
+
+            const p_init_vis_attribute=element.getAttribute("p:init-vis")
+            if(p_init_vis_attribute){
+                this._onFirstDraw(element,()=>{
+                    let bindings=new Bindings()
+                    bindings.inherit(bindings_in)
+                    // add local variable "element"
+                    bindings.add(new Binding("element",element))
+                    eval(bindings.expand("bindings")+p_init_vis_attribute)
+                })
             }
 
             // handle p:bind attributes
