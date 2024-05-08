@@ -318,34 +318,73 @@ class Manager{
         let remove_callbacks_from_textnodes=[]
         if(textNodes!=null && textNodes.length>0){
             for(let textNode of textNodes){
+
+                let entryValueCache=new Map()
+                /**
+                 * replace all matches to {{...}} with their evaluated values
+                 * @param {boolean} registerFromStack if true, registers callbacks to update the template text when a value changes
+                 * @returns {(()=>void)[]}
+                 */
                 function replace(registerFromStack=false){
+                    /** save entries where the value has changed @type {Set<string>} */
+                    let entryValueChanged=new Set()
+
                     let template=textNode.templateText
 
+                    let entries=getReplacements(template)
+                    if(entries.length==0){
+                        return []
+                    }
+
                     let remove_callbacks=[]
-                    for(let entry of getReplacements(template)){
+
+                    for(let entry of entries){
                         if(registerFromStack)
                             EvalStack.begin()
 
+                        /** evaluate current value of the entry */
                         const newValue=eval(bindings_str+entry)
-                        template=template.replace("{{"+entry+"}}",newValue)
+                        /** if the value has changed, save new value and make note that the value for this entry has changed */
+                        if(!(entryValueCache.has(entry) && entryValueCache.get(entry)===newValue)){
+                            entryValueChanged.add(entry)
+                            entryValueCache.set(entry,newValue)
+                        }
 
                         if(registerFromStack){
                             let stack=EvalStack.end()
-                            let lastInStack=stack[stack.length-1]
                             if(stack.length===0){
-                                console.error("stack is empty. maybe object is not managed?",entry,"=",newValue)
-                            }
+                                //console.warn("stack is empty. maybe object is not managed? registering interval callback instead.","element:",element,"entry: "+entry,"( =",newValue,")")
 
-                            remove_callbacks.push(me.registerCallback(lastInStack[0],(o,p,n)=>{
-                                replace(false)
-                            },lastInStack[1]))
+                                let intervalTimer=setInterval(()=>{
+                                    replace(false)
+                                },1e3/30)
+
+                                remove_callbacks.push(function(){
+                                    clearInterval(intervalTimer)
+                                })
+                            }else{
+                                let lastInStack=stack[stack.length-1]
+
+                                remove_callbacks.push(me.registerCallback(lastInStack[0],(o,p,n)=>{
+                                    replace(false)
+                                },lastInStack[1]))
+                            }
                         }
+                    }
+                    
+                    if(entryValueChanged.size===0){
+                        return remove_callbacks
+                    }
+
+                    for(let entry of entries){
+                        let newValue=entryValueCache.get(entry)
+                        template=template.replace("{{"+entry+"}}",newValue)
                     }
                     textNode.node.nodeValue=template
 
                     return remove_callbacks
                 }
-                remove_callbacks_from_textnodes.push(replace(true).flat(100))
+                remove_callbacks_from_textnodes.push(replace(true))
             }
         }
 
