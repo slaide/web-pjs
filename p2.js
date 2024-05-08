@@ -338,6 +338,8 @@ class Manager{
 
                     let remove_callbacks=[]
 
+                    let require_timedIntervalReplacement=false
+
                     for(let entry of entries){
                         if(registerFromStack)
                             EvalStack.begin()
@@ -355,13 +357,7 @@ class Manager{
                             if(stack.length===0){
                                 //console.warn("stack is empty. maybe object is not managed? registering interval callback instead.","element:",element,"entry: "+entry,"( =",newValue,")")
 
-                                let intervalTimer=setInterval(()=>{
-                                    replace(false)
-                                },1e3/30)
-
-                                remove_callbacks.push(function(){
-                                    clearInterval(intervalTimer)
-                                })
+                                require_timedIntervalReplacement=true
                             }else{
                                 let lastInStack=stack[stack.length-1]
 
@@ -370,6 +366,16 @@ class Manager{
                                 },lastInStack[1]))
                             }
                         }
+                    }
+
+                    if(registerFromStack && require_timedIntervalReplacement){
+                        let intervalTimer=setInterval(()=>{
+                            replace(false)
+                        },1e3/30)
+
+                        remove_callbacks.push(function(){
+                            clearInterval(intervalTimer)
+                        })
                     }
                     
                     if(entryValueChanged.size===0){
