@@ -792,3 +792,142 @@ class Manager{
         return ret
     }
 }
+
+/**
+ * wraps an XMLHttpRequest object to provide a slightly more convenient interface
+ */
+class XHR{
+    constructor(){
+        this.xhr=new XMLHttpRequest()
+        
+        this.aborted=false
+        /**
+         * @type {((xhr:XMLHttpRequest)=>void)[]}
+         */
+        this.onload_funcs=[]
+        /**
+         * @type {(()=>void)[]}
+         */
+        this.onerror_funcs=[]
+
+        this.returns=undefined
+
+        this.xhr.onerror=()=>{
+            if(this.aborted){
+                return
+            }
+            this._onerror()
+        }
+        this.xhr.onload=()=>{
+            if(this.aborted){
+                return
+            }
+
+            if(this.xhr.status>=200 && this.xhr.status<300){
+                this.returns=this._onsuccess()
+            }else{
+                this._onerror()
+            }
+        }
+    }
+    /**
+     * @brief cancel this request
+     */
+    cancel(){
+        this.aborted=true
+        this.xhr.abort()
+    }
+    /**
+     * @brief cancel this request (alias for this.cancel)
+     */
+    abort(){
+        this.cancel()
+    }
+    /**
+     * @brief internally used, execute all onerror callbacks
+     */
+    _onerror(){
+        for(let cb of this.onerror_funcs){
+            cb.bind(this.xhr)()
+        }
+    }
+    /**
+     * @brief internally used, execute all onsuccess callbacks
+     * @returns {undefined|any|any[]}
+     */
+    _onsuccess(){
+        /** @type{any[]} */
+        let ret=[]
+        for(let cb of this.onload_funcs){
+            let res=cb(this.xhr)
+            if(res!==undefined){
+                ret.push(res)
+            }
+        }
+        switch(ret.length){
+            case 0:return;
+            case 1:return ret[0];
+            default:return ret
+        }
+    }
+    /**
+     * @brief add a callback to be executed on successful request
+     * @param {(xhr:XMLHttpRequest)=>void} cb
+     * @returns {this}
+     */
+    onload(cb){
+        this.onload_funcs.push(cb)
+        return this
+    }
+    /**
+     * @brief add a callback to be executed on failed request
+     * @param {()=>void} cb
+     * @returns {this}
+     */
+    onerror(cb){
+        this.onerror_funcs.push(cb)
+        return this
+    }
+    /**
+     * @brief send the request
+     * @param {string} url 
+     * @param {any|object|string|null} data
+     * @param {"GET"|"POST"|"PUT"|"DELETE"|"HEAD"|"CONNECT"|"OPTIONS"|"TRACE"|"PATCH"} method
+     * @param {undefined|string} content_type automatically inferred for some types of data, if not provided
+     * @returns {undefined|any|any[]}
+     */
+    send(url,data=null,method="GET",content_type=undefined){
+        if(this.aborted){
+            console.error("post was called on an aborted request")
+            return
+        }
+
+        this.xhr.open(method,url)
+
+        let data_str=null
+        if(data instanceof Object){
+            if(content_type===undefined)
+                content_type="application/json"
+
+            data_str=JSON.stringify(data)
+        }else if(data instanceof String || typeof data==="string"){
+            if(content_type===undefined)
+                content_type="text/plain"
+
+            data_str=String(data)
+        }else if(data!==null){
+            console.error("data must be an object or string")
+        }
+
+        if(content_type)
+            this.xhr.setRequestHeader("Content-Type", content_type)
+
+        if(data===null){
+            this.xhr.send()
+        }else{
+            this.xhr.send(data_str)
+        }
+
+        return this.returns
+    }
+}
