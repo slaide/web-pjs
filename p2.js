@@ -797,8 +797,9 @@ class Manager{
  * wraps an XMLHttpRequest object to provide a slightly more convenient interface
  */
 class XHR{
-    constructor(){
+    constructor(async=true){
         this.xhr=new XMLHttpRequest()
+        this.async=async
         
         this.aborted=false
         /**
@@ -902,7 +903,7 @@ class XHR{
             return
         }
 
-        this.xhr.open(method,url)
+        this.xhr.open(method,url,this.async)
 
         let data_str=null
         if(data instanceof Object){
