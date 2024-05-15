@@ -278,7 +278,11 @@ class EvalStack{
 }
 
 class Manager{
-    constructor(){
+    /**
+     * 
+     * @param {{intervalFPS:number}?} options 
+     */
+    constructor(options=null){
         document.addEventListener("DOMContentLoaded",()=>{
             let target_elements=document.querySelectorAll(".data")
             /// @ts-ignore
@@ -297,6 +301,14 @@ class Manager{
         this._firstDrawCallbacks=new Map()
         /** @type {Set<HTMLElement>} */
         this._firstDrawCompleted=new Set()
+
+        this._intervalFPS=30
+
+        if(options){
+            if(options.intervalFPS){
+                this._intervalFPS=options.intervalFPS
+            }
+        }
     }
     /**
      * 
@@ -371,7 +383,7 @@ class Manager{
                     if(registerFromStack && require_timedIntervalReplacement){
                         let intervalTimer=setInterval(()=>{
                             replace(false)
-                        },1e3/30)
+                        },1e3/me._intervalFPS)
 
                         remove_callbacks.push(function(){
                             clearInterval(intervalTimer)
