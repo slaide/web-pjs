@@ -1,0 +1,26 @@
+<html>
+    <head>
+        <script src="../p2.js"></script>
+        <script>
+            let _p=new Manager()
+        </script>
+    </head>
+    <body>
+        <script>
+            let name_match=_p.manage({starts_with:""})
+            let list = _p.manage([
+                {name:"peter"},
+                {name:"paul"},
+                {name:"petra"},
+                {name:"lena"},
+                {name:"lisa"},
+                {name:"alligator"},
+                {name:"cassandra"},
+            ])
+        </script>
+        <input type="text" class="data" p:bind="name_match.starts_with" placeholder="filter by name">
+        <template class="data" p:for="person of list">
+            <div p:if="(name_match.starts_with.length==0) || (person.name.indexOf(name_match.starts_with)>=0)">{{person.name}}</div>
+        </template>
+    </body>
+</html>

@@ -641,14 +641,54 @@ class Manager{
 
             const p_if_attribute=element.getAttribute("p:if")
             if(p_if_attribute){
+                let stop_processing=false
+
                 let bindings=new Bindings()
                 bindings.inherit(bindings_in)
                 // add local variable "element"
                 bindings.add(new Binding("element",element))
 
+                let previous_element=element.previousElementSibling
+
+                EvalStack.begin()
                 const show=eval(bindings.expand("bindings")+p_if_attribute)
+                let stack=EvalStack.end()
+                let is_observable=stack.length>0 && stack[stack.length-1][0][stack[stack.length-1][1]]==show
+                
                 if(!show){
                     element.parentElement?.removeChild(element)
+                    stop_processing=true
+                }
+
+                if(is_observable){
+                    this.registerCallback(stack[stack.length-1][0],(o,p,n)=>{
+                        let show=eval(bindings.expand("bindings")+p_if_attribute)
+                        if(show){
+                            if(previous_element){
+                                previous_element.insertAdjacentElement("afterend",element)
+                            }else{
+                                element.parentElement?.prepend(element)
+                            }
+                        }else{
+                            element.parentElement?.removeChild(element)
+                        }
+                    },stack[stack.length-1][1])
+                }else{
+                    setInterval(()=>{
+                        let show=eval(bindings.expand("bindings")+p_if_attribute)
+                        if(show){
+                            if(previous_element){
+                                previous_element.insertAdjacentElement("afterend",element)
+                            }else{
+                                element.parentElement?.prepend(element)
+                            }
+                        }else{
+                            element.parentElement?.removeChild(element)
+                        }
+                    },1e3/this._intervalFPS)
+                }
+
+                if(stop_processing){
                     continue
                 }
             }
