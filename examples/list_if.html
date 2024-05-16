@@ -1,0 +1,20 @@
+<html>
+    <head>
+        <script src="../p2.js"></script>
+        <script>
+            let _p=new Manager()
+        </script>
+    </head>
+    <body>
+        <script>
+            let list = _p.manage([{value:2},{value:4},{value:5}])
+        </script>
+        <template class="data" p:for="item of list">
+            <div>
+                value is {{item.value}}
+                <span p:if="item.value%2==0">which is even</span>
+                <span p:if="item.value%2==1">which is odd</span>
+            </div>
+        </template>
+    </body>
+</html>

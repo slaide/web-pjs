@@ -628,6 +628,19 @@ class Manager{
             /** @type{(()=>void)[]} */
             let remove_callbacks=[]
 
+            const p_if_attribute=element.getAttribute("p:if")
+            if(p_if_attribute){
+                let bindings=new Bindings()
+                bindings.inherit(bindings_in)
+                // add local variable "element"
+                bindings.add(new Binding("element",element))
+                let show=eval(bindings.expand("bindings")+p_if_attribute)
+                if(!show){
+                    element.parentElement?.removeChild(element)
+                    continue
+                }
+            }
+
             const p_for_attribute=element.getAttribute("p:for")
             if(p_for_attribute){
                 let [item_name,container_name]=p_for_attribute.split(" of ")
