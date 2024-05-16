@@ -48,6 +48,8 @@ class Binding{
     }
 }
 class Bindings{
+    static _new_value_index=0
+
     /**
      * create new bindings set
      * @param {Map<string,Binding>|Binding[]|Binding} init_bindings 
@@ -59,7 +61,6 @@ class Bindings{
         this.inherited_bindings=[]
         /** @type {Map<number,Binding>} */
         this.value_map=new Map()
-        this._new_value_index=0
 
         this.add(init_bindings)
     }
@@ -118,9 +119,9 @@ class Bindings{
      * @return {number} the index of the value in the value map to be used in eval'able code via _getBindingValue
      */
     _createBindingIndex(binding){
-        let binding_map_index=this._new_value_index
+        let binding_map_index=Bindings._new_value_index
         this.value_map.set(binding_map_index,binding)
-        this._new_value_index+=1
+        Bindings._new_value_index+=1
         return binding_map_index
     }
     /**
@@ -155,7 +156,8 @@ class Bindings{
      * @returns {string}
      */
     _expandBinding(binding,binding_varname){
-        return "let "+binding.name+"="+binding_varname+"._getBindingValue("+this._createBindingIndex(binding)+").value ; "
+        let new_binding_index=this._createBindingIndex(binding)
+        return "let "+binding.name+"="+binding_varname+"._getBindingValue("+new_binding_index+").value ; "
     }
 
     /**
@@ -191,12 +193,15 @@ class Bindings{
      * throws on error (i.e. on duplicate binding names with different values)
      * 
      * @param {string} bindings_varname 
-     * @param {Map<string,Binding>} existing_bindings
+     * @param {Map<string,Binding>?} existing_bindings
      * @returns {string}
      */
-    expand(bindings_varname,existing_bindings=new Map()){
+    expand(bindings_varname,existing_bindings=null){
         // this returns a map of all bindings, including inherited bindings
         // it also throws on duplicate binding names, if the bindings dont point to the same value
+        if(!existing_bindings)
+            existing_bindings=new Map()
+
         if(existing_bindings.size==0)
             this._getBindingMap()
 
@@ -303,6 +308,9 @@ class Manager{
         this._firstDrawCompleted=new Set()
 
         this._intervalFPS=30
+
+        /** @type {Set<Element>} */
+        this._generatedElements=new Set()
 
         if(options){
             if(options.intervalFPS){
@@ -426,6 +434,9 @@ class Manager{
 
         for(let child of element.children){
             Bindings.getForElement(child).inherit(bindings_)
+            if(this._generatedElements.has(child)){
+                continue;
+            }
             remove_callbacks_from_textnodes.push(this.replaceMatches(child).flat(100))
         }
 
@@ -634,7 +645,8 @@ class Manager{
                 bindings.inherit(bindings_in)
                 // add local variable "element"
                 bindings.add(new Binding("element",element))
-                let show=eval(bindings.expand("bindings")+p_if_attribute)
+
+                const show=eval(bindings.expand("bindings")+p_if_attribute)
                 if(!show){
                     element.parentElement?.removeChild(element)
                     continue
@@ -648,16 +660,17 @@ class Manager{
 
                 let container=this.ensureManagedObject(eval(bindings_in.expand("bindings_in")+container_name))
                 
-                const applyPFor=(()=>{
+                const me=this
+                function applyPFor(firstTimeInit=false){
                     for(let cb of remove_callbacks){
                         cb()
                     }
+                    
+                    remove_callbacks=[]
+                    copiedElements=[]
 
                     if(!element.parentElement){console.error(element,"has no parent");return;}
 
-                    copiedElements=[]
-                    remove_callbacks=[]
-                    
                     /** @ts-ignore - container is iterable */
                     for(let item of container){
                         let element_templates
@@ -676,6 +689,8 @@ class Manager{
                             // make clone visible as such in DOM
                             clone.setAttribute("_pClonedFromTemplate","true")
 
+                            me._generatedElements.add(clone)
+
                             copiedElements.push(clone)
                             element.parentElement.insertBefore(clone,element)
                             remove_callbacks.push(function(){clone.parentElement?.removeChild(clone)})
@@ -690,18 +705,16 @@ class Manager{
                                 eval("let "+container_name+"=2")
                                 inheritedBindings.add(new Binding(container_name,container))
                             }catch(e){}
-
-                            remove_callbacks=remove_callbacks.concat(this.replaceMatches(clone))
                         }
                     }
-                    remove_callbacks=remove_callbacks.concat(this.init(copiedElements).remove)
-                }).bind(this)
+                    remove_callbacks=remove_callbacks.concat(me.init(copiedElements).remove)
+                }
 
                 this.registerCallback(this.managedProxies.get(container),(obj,property,newval)=>{
-                    applyPFor()
+                    applyPFor(false)
                 })
 
-                applyPFor()
+                applyPFor(true)
             }
 
             // initialize all child elements
