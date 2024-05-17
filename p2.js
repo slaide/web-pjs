@@ -421,14 +421,28 @@ class Manager{
 
             let remove_callbacks=[]
             let raw_value=attribute.value
+            let new_value=raw_value
             for(let entry of getReplacements(raw_value)){
                 let replaced_value=eval(bindings_str+entry)
-                attribute.value=raw_value.replace("{{"+entry+"}}",replaced_value)
+                new_value=new_value.replace("{{"+entry+"}}",replaced_value)
 
                 remove_callbacks.push(this.registerCallback(replaced_value,(o,p,n)=>{
                     attribute.value=raw_value.replace("{{"+entry+"}}",eval(bindings_str+entry))
                 }))
             }
+            attribute.value=new_value
+   
+            // TODO hacky solution to a common problem.. find a better way to handle this
+            //
+            // for tag=select elements, when the options are generated after the value has already been set,
+            // the value is set to the value of the first element, regardless..
+            // this callback below sets the value of the select element again, hopefully after all options have been generated
+            if(attribute.name=="value" && element instanceof HTMLElement){
+                this._onFirstDraw(element,()=>{
+                    attribute.value=new_value
+                })
+            }
+
             remove_callbacks_from_textnodes.push(remove_callbacks)
         }
 
@@ -751,6 +765,7 @@ class Manager{
                             }catch(e){}
                         }
                     }
+
                     remove_callbacks=remove_callbacks.concat(me.init(copiedElements).remove)
                 }
 
