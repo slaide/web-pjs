@@ -643,49 +643,53 @@ class Manager{
             if(p_if_attribute){
                 let stop_processing=false
 
-                let bindings=new Bindings()
+                const bindings=new Bindings()
                 bindings.inherit(bindings_in)
                 // add local variable "element"
                 bindings.add(new Binding("element",element))
 
-                let previous_element=element.previousElementSibling
+                const previous_element=element.previousElementSibling
 
                 EvalStack.begin()
                 const show=eval(bindings.expand("bindings")+p_if_attribute)
-                let stack=EvalStack.end()
-                let is_observable=stack.length>0 && stack[stack.length-1][0][stack[stack.length-1][1]]==show
+                const stack=EvalStack.end()
+                const is_observable=stack.length>0 && stack[stack.length-1][0][stack[stack.length-1][1]]==show
                 
                 if(!show){
                     element.parentElement?.removeChild(element)
                     stop_processing=true
                 }
 
+                /** cache last 'show?' result, and only change dom if the 'show?' status has changed */
+                let last_show=show
+                function reevaluate_show(){
+                    const show=eval(bindings.expand("bindings")+p_if_attribute)
+
+                    if(show===last_show){
+                        return
+                    }
+
+                    if(show){
+                        if(previous_element){
+                            previous_element.insertAdjacentElement("afterend",element)
+                        }else{
+                            element.parentElement?.prepend(element)
+                        }
+                    }else{
+                        element.parentElement?.removeChild(element)
+                    }
+                    last_show=show
+                }
+
                 if(is_observable){
-                    this.registerCallback(stack[stack.length-1][0],(o,p,n)=>{
-                        let show=eval(bindings.expand("bindings")+p_if_attribute)
-                        if(show){
-                            if(previous_element){
-                                previous_element.insertAdjacentElement("afterend",element)
-                            }else{
-                                element.parentElement?.prepend(element)
-                            }
-                        }else{
-                            element.parentElement?.removeChild(element)
-                        }
-                    },stack[stack.length-1][1])
+                    remove_callbacks=remove_callbacks.concat(this.registerCallback(stack[stack.length-1][0],(o,p,n)=>{
+                        reevaluate_show()
+                    },stack[stack.length-1][1]))
                 }else{
-                    setInterval(()=>{
-                        let show=eval(bindings.expand("bindings")+p_if_attribute)
-                        if(show){
-                            if(previous_element){
-                                previous_element.insertAdjacentElement("afterend",element)
-                            }else{
-                                element.parentElement?.prepend(element)
-                            }
-                        }else{
-                            element.parentElement?.removeChild(element)
-                        }
-                    },1e3/this._intervalFPS)
+                    const si_handle=setInterval(reevaluate_show,1e3/this._intervalFPS)
+                    remove_callbacks.push(function(){
+                        clearInterval(si_handle)
+                    })
                 }
 
                 if(stop_processing){
