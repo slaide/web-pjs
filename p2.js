@@ -314,6 +314,9 @@ class Manager{
         /** @type {Set<Element>} */
         this._generatedElements=new Set()
 
+        /** @type {Map<Element,Element[]>} */
+        this._ifParentChildrenList=new Map()
+
         if(options){
             if(options.intervalFPS){
                 this._intervalFPS=options.intervalFPS
@@ -333,7 +336,6 @@ class Manager{
     replaceMatches(element){
         const me=this
         let bindings_=Bindings.getForElement(element)
-        let bindings_str=bindings_.expand("bindings_")
 
         if(!this.objTextNodes.has(element)){
             let textNodes=getTextNodes(element).map((node)=>{return {"node":node,"templateText":node.nodeValue}})
@@ -345,13 +347,13 @@ class Manager{
         let remove_callbacks_from_textnodes=[]
         if(textNodes!=null && textNodes.length>0){
             for(let textNode of textNodes){
-                let template=textNode.templateText
+                const template=textNode.templateText
 
-                let entries=getReplacements(template)
+                const entries=getReplacements(template)
                 if(entries.length==0)
                     continue;
 
-                let entryValueCache=new Map()
+                const entryValueCache=new Map()
 
                 /**
                  * replace all matches to {{...}} with their evaluated values
@@ -365,6 +367,8 @@ class Manager{
                     let remove_callbacks=[]
 
                     let require_timedIntervalReplacement=false
+
+                    const bindings_str=bindings_.expand("bindings_")
 
                     for(let entry of entries){
                         if(registerFromStack)
@@ -410,11 +414,12 @@ class Manager{
                         return remove_callbacks
                     }
 
+                    let templateCopy=template+""
                     for(let entry of entries){
                         let newValue=entryValueCache.get(entry)
-                        template=template.replace("{{"+entry+"}}",newValue)
+                        templateCopy=templateCopy.replace("{{"+entry+"}}",newValue)
                     }
-                    textNode.node.nodeValue=template
+                    textNode.node.nodeValue=templateCopy
 
                     return remove_callbacks
                 }
@@ -423,6 +428,7 @@ class Manager{
         }
 
         // iterate over all attributes and replace matches in their values
+        const bindings_str=bindings_.expand("bindings_")
         for(let attributeIndex=0;attributeIndex<element.attributes.length;attributeIndex++){
             let attribute=element.attributes.item(attributeIndex)
             if(!attribute)continue;
@@ -435,6 +441,7 @@ class Manager{
                 new_value=new_value.replace("{{"+entry+"}}",replaced_value)
 
                 remove_callbacks.push(this.registerCallback(replaced_value,(o,p,n)=>{
+                    const bindings_str=bindings_.expand("bindings_")
                     attribute.value=raw_value.replace("{{"+entry+"}}",eval(bindings_str+entry))
                 }))
             }
@@ -663,6 +670,8 @@ class Manager{
 
             const p_if_attribute=element.getAttribute("p:if")
             if(p_if_attribute){
+                // this is an unreactive property, so eval once -> if false, remove element, if true, continue processing other attributes etc.
+
                 let stop_processing=false
 
                 const bindings=new Bindings()
@@ -670,51 +679,12 @@ class Manager{
                 // add local variable "element"
                 bindings.add(new Binding("element",element))
 
-                const previous_element=element.previousElementSibling
-
-                EvalStack.begin()
                 const show=eval(bindings.expand("bindings")+p_if_attribute)
-                const stack=EvalStack.end()
-                const is_observable=stack.length>0 && stack[stack.length-1][0][stack[stack.length-1][1]]==show
                 
                 if(!show){
-                    element.parentElement?.removeChild(element)
+                    if(!element.parentElement){console.error(element,"has no parent");continue;}
+                    element.parentElement.removeChild(element)
                     stop_processing=true
-                }
-
-                /** cache last 'show?' result, and only change dom if the 'show?' status has changed */
-                let last_show=show
-                function reevaluate_show(){
-                    const show=eval(bindings.expand("bindings")+p_if_attribute)
-
-                    if(show===last_show){
-                        return
-                    }
-
-                    if(show){
-                        if(previous_element){
-                            previous_element.insertAdjacentElement("afterend",element)
-                        }else{
-                            element.parentElement?.prepend(element)
-                        }
-                    }else{
-                        element.parentElement?.removeChild(element)
-                    }
-                    last_show=show
-                }
-
-                if(is_observable){
-                    remove_callbacks=remove_callbacks.concat(this.registerCallback(stack[stack.length-1][0],(o,p,n)=>{
-                        reevaluate_show()
-                    },stack[stack.length-1][1]))
-                }else{
-                    const me=this
-                    me._onIntervalCallbacks.push(reevaluate_show)
-
-                    remove_callbacks.push(function(){
-                        let index=me._onIntervalCallbacks.indexOf(reevaluate_show)
-                        me._onIntervalCallbacks.splice(index,1)
-                    })
                 }
 
                 if(stop_processing){
