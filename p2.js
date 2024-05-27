@@ -308,6 +308,8 @@ class Manager{
         this._firstDrawCompleted=new Set()
 
         this._intervalFPS=30
+        /** @type {(()=>void)[]} */
+        this._onIntervalCallbacks=[]
 
         /** @type {Set<Element>} */
         this._generatedElements=new Set()
@@ -317,6 +319,11 @@ class Manager{
                 this._intervalFPS=options.intervalFPS
             }
         }
+
+        const me=this
+        setInterval(function(){
+            me._onIntervalCallbacks.forEach((f)=>f())
+        },1.0/this._intervalFPS)
     }
     /**
      * 
@@ -324,7 +331,7 @@ class Manager{
      * @returns {(()=>void)[]} - returns a function that can be called to remove the generated callbacks 
      */
     replaceMatches(element){
-        let me=this
+        const me=this
         let bindings_=Bindings.getForElement(element)
         let bindings_str=bindings_.expand("bindings_")
 
@@ -338,8 +345,14 @@ class Manager{
         let remove_callbacks_from_textnodes=[]
         if(textNodes!=null && textNodes.length>0){
             for(let textNode of textNodes){
+                let template=textNode.templateText
+
+                let entries=getReplacements(template)
+                if(entries.length==0)
+                    continue;
 
                 let entryValueCache=new Map()
+
                 /**
                  * replace all matches to {{...}} with their evaluated values
                  * @param {boolean} registerFromStack if true, registers callbacks to update the template text when a value changes
@@ -348,13 +361,6 @@ class Manager{
                 function replace(registerFromStack=false){
                     /** save entries where the value has changed @type {Set<string>} */
                     let entryValueChanged=new Set()
-
-                    let template=textNode.templateText
-
-                    let entries=getReplacements(template)
-                    if(entries.length==0){
-                        return []
-                    }
 
                     let remove_callbacks=[]
 
@@ -389,12 +395,14 @@ class Manager{
                     }
 
                     if(registerFromStack && require_timedIntervalReplacement){
-                        let intervalTimer=setInterval(()=>{
+                        const onIntervalCallback=()=>{
                             replace(false)
-                        },1e3/me._intervalFPS)
+                        }
+                        me._onIntervalCallbacks.push(onIntervalCallback)
 
                         remove_callbacks.push(function(){
-                            clearInterval(intervalTimer)
+                            let index=me._onIntervalCallbacks.indexOf(onIntervalCallback)
+                            me._onIntervalCallbacks.splice(index,1)
                         })
                     }
                     
@@ -700,9 +708,12 @@ class Manager{
                         reevaluate_show()
                     },stack[stack.length-1][1]))
                 }else{
-                    const si_handle=setInterval(reevaluate_show,1e3/this._intervalFPS)
+                    const me=this
+                    me._onIntervalCallbacks.push(reevaluate_show)
+
                     remove_callbacks.push(function(){
-                        clearInterval(si_handle)
+                        let index=me._onIntervalCallbacks.indexOf(reevaluate_show)
+                        me._onIntervalCallbacks.splice(index,1)
                     })
                 }
 
