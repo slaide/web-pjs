@@ -323,7 +323,7 @@ class Manager{
         const me=this
         setInterval(function(){
             me._onIntervalCallbacks.forEach((f)=>f())
-        },1.0/this._intervalFPS)
+        },1e3/this._intervalFPS)
     }
     /**
      * 
