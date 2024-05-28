@@ -1001,10 +1001,15 @@ class XHR{
         if(content_type)
             this.xhr.setRequestHeader("Content-Type", content_type)
 
-        if(data===null){
-            this.xhr.send()
-        }else{
-            this.xhr.send(data_str)
+        try{
+            if(data===null){
+                this.xhr.send()
+            }else{
+                this.xhr.send(data_str)
+            }
+        }catch(e){
+            if(!this.aborted)
+                this._onerror()
         }
 
         return this.returns
