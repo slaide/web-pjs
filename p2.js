@@ -329,6 +329,18 @@ class Manager{
         },1e3/this._intervalFPS)
     }
     /**
+     * if obj is a proxy managing an object, return the original object
+     * otherwise just return the object/argument
+     * @param {object} obj
+     * @returns {object}
+     */
+    getUnmanaged(obj){
+        if(this.managedProxies.has(obj)){
+            return this.managedProxies.get(obj)
+        }
+        return obj
+    }
+    /**
      * 
      * @param {Element} element 
      * @returns {(()=>void)[]} - returns a function that can be called to remove the generated callbacks 
