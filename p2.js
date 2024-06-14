@@ -282,6 +282,10 @@ class EvalStack{
     }
 }
 
+/**
+ * @typedef {(obj:object,property:PropertyKey,value:any)=>void} ProxySetterInterceptCallback
+ */
+
 class Manager{
     /**
      * 
@@ -295,9 +299,11 @@ class Manager{
         })
         this.managedValues=new Map()
         this.managedProxies=new Map()
+        /** @type {Map<object,ProxySetterInterceptCallback[]>} */
         this.objCallbacks=new Map()
         /** @type {Map<Element,{node:ChildNode,templateText:string}[]>} */
         this.objTextNodes=new Map()
+        /** @type {Map<object,Map<PropertyKey,ProxySetterInterceptCallback[]>>} */
         this.namedObjCallbacks=new Map()
         /** @type {Set<HTMLElement>} */
         this.initializedElements=new Set()
@@ -387,11 +393,17 @@ class Manager{
                             EvalStack.begin()
 
                         /** evaluate current value of the entry */
-                        const newValue=eval(bindings_str+entry)
-                        /** if the value has changed, save new value and make note that the value for this entry has changed */
-                        if(!(entryValueCache.has(entry) && entryValueCache.get(entry)===newValue)){
-                            entryValueChanged.add(entry)
-                            entryValueCache.set(entry,newValue)
+
+                        try{
+                            const newValue=eval(bindings_str+entry)
+                            /** if the value has changed, save new value and make note that the value for this entry has changed */
+                            if(!(entryValueCache.has(entry) && entryValueCache.get(entry)===newValue)){
+                                entryValueChanged.add(entry)
+                                entryValueCache.set(entry,newValue)
+                            }
+                        }catch(e){
+                            // if we fail to evaluate the current entry, just go on to the next one
+                            continue;
                         }
 
                         if(registerFromStack){
@@ -487,7 +499,7 @@ class Manager{
      * @brief register an object for managing, returns the wrapper (proxy) object
      * @template {object} T
      * @param {T|Proxy<T>} obj 
-     * @param {((o:object,property:string|symbol,new_value:any)=>void)[]} inheritedCallbacks
+     * @param {ProxySetterInterceptCallback[]} inheritedCallbacks
      * @returns {T}
      */
     ensureManagedObject(obj,inheritedCallbacks=[]){
@@ -501,8 +513,15 @@ class Manager{
             let me=this
 
             if(inheritedCallbacks.length>0){
-                me.objCallbacks.set(obj,[inheritedCallbacks])
+                me.objCallbacks.set(obj,inheritedCallbacks)
             }
+            try{
+                let _prox=new Proxy(obj,{})
+            }catch(e){
+                console.error("failed to create proxy for object",obj)
+                throw e
+            }
+
             let new_proxy=new Proxy(obj,{
                 get:(target,prop)=>{
                     if(!EvalStack.done){
@@ -555,42 +574,48 @@ class Manager{
     /**
      * obj should be the regular (non-proxy) object
      * @param {object} obj 
-     * @param {(o:object,property:string|symbol,new_value:any)=>void} callback 
+     * @param {(o:object,property:PropertyKey,new_value:any)=>void} callback 
      * @return {(()=>void)[]} - returns a function that can be called to remove the callback
      */
     registerCallback(obj,callback,key=null){
         let me=this
         if(key!=null){
-            if(!this.namedObjCallbacks.has(obj)){
-                this.namedObjCallbacks.set(obj,new Map())
+            let this_obj_named_callbacks=this.namedObjCallbacks.get(obj)
+            if(!this_obj_named_callbacks){
+                this_obj_named_callbacks=new Map()
+                this.namedObjCallbacks.set(obj,this_obj_named_callbacks)
             }
-            if(!this.namedObjCallbacks.get(obj).has(key)){
-                this.namedObjCallbacks.get(obj).set(key,[])
+
+            let this_obj_callbacks_for_key=this_obj_named_callbacks.get(key)
+            if(!this_obj_callbacks_for_key){
+                this_obj_callbacks_for_key=[]
+                this_obj_named_callbacks.set(key,this_obj_callbacks_for_key)
             }
-            let i=this.namedObjCallbacks.get(obj).get(key).push(callback)
+
+            let i=this_obj_callbacks_for_key.push(callback)
 
             return [function(){
-                let callbacks=me.namedObjCallbacks.get(obj).get(key)
                 let i=0
-                for(let f of callbacks){
+                for(let f of this_obj_callbacks_for_key){
                     if(f==callback){
-                        callbacks.splice(i,1)
+                        this_obj_callbacks_for_key.splice(i,1)
                     }
                     i+=1
                 }
             }]
         }else{
-            if(!this.objCallbacks.has(obj)){
-                this.objCallbacks.set(obj,[])
+            let obj_callbacks=this.objCallbacks.get(obj)
+            if(!obj_callbacks){
+                obj_callbacks=[]
+                this.objCallbacks.set(obj,obj_callbacks)
             }
-            this.objCallbacks.get(obj).push(callback)
+            obj_callbacks.push(callback)
 
             return [function(){
-                let callbacks=me.objCallbacks.get(obj)
                 let i=0
-                for(let f of callbacks){
+                for(let f of obj_callbacks){
                     if(f==callback){
-                        callbacks.splice(i,1)
+                        obj_callbacks.splice(i,1)
                     }
                     i+=1
                 }
@@ -600,7 +625,7 @@ class Manager{
     /**
      * 
      * @param {object} obj 
-     * @param {string|symbol} property 
+     * @param {PropertyKey} property 
      * @param {any} new_value 
      */
     triggerChange(obj,property,new_value){
@@ -609,8 +634,7 @@ class Manager{
 
         // flatten to handle inherited callbacks
         for(let callback of callbacks.flat(100)){
-            if(!(callback instanceof Function)){console.error(callback,"not instanceof Function");continue;}
-            callback(property,new_value)
+            callback(obj,property,new_value)
         }
     }
 
@@ -662,6 +686,14 @@ class Manager{
             if(!(element instanceof HTMLElement)){console.error(element,"not instanceof HTMLElement");continue;}
             let bindings_in=Bindings.getForElement(element)
 
+            const element_parent=element.parentElement
+            if(!element_parent){console.error(element,"has no parent");continue;}
+
+            // if element is a template, remove it from the dom
+            if(element.tagName.toLowerCase()=="template"){
+                element.style.setProperty("display","none")
+            }
+
             // keep track of initialized elements to avoid double initialization
             if(this.initializedElements.has(element)){
                 continue;
@@ -675,8 +707,6 @@ class Manager{
                 bindings.inherit(bindings_in)
             }
 
-            /** @type{Element[]} */
-            let copiedElements=[]
             /** @type{(()=>void)[]} */
             let remove_callbacks=[]
 
@@ -694,8 +724,7 @@ class Manager{
                 const show=eval(bindings.expand("bindings")+p_if_attribute)
                 
                 if(!show){
-                    if(!element.parentElement){console.error(element,"has no parent");continue;}
-                    element.parentElement.removeChild(element)
+                    element_parent.removeChild(element)
                     stop_processing=true
                 }
 
@@ -709,64 +738,138 @@ class Manager{
                 let [item_name,container_name]=p_for_attribute.split(" of ")
                 if(!container_name){console.error("invalid p:for attribute",p_for_attribute);continue;}
 
-                let container=this.ensureManagedObject(eval(bindings_in.expand("bindings_in")+container_name))
-                
-                const me=this
-                function applyPFor(firstTimeInit=false){
-                    for(let cb of remove_callbacks){
-                        cb()
-                    }
-                    
-                    remove_callbacks=[]
-                    copiedElements=[]
-
-                    if(!element.parentElement){console.error(element,"has no parent");return;}
-
-                    /** @ts-ignore - container is iterable */
-                    for(let item of container){
-                        let element_templates
-                        // if element is a template
-                        let elementTemplateDocumentFragment=templateElementContent(element)
-                        if(elementTemplateDocumentFragment){
-                            element_templates=elementTemplateDocumentFragment.children
-                        }else{
-                            element_templates=element.children
-                        }
-
-                        for(let element_template of element_templates){
-                            let clone=element_template.cloneNode(true)
-                            if(!(clone instanceof Element)){console.error(clone,"not instanceof Element");return;}
-
-                            // make clone visible as such in DOM
-                            clone.setAttribute("_pClonedFromTemplate","true")
-
-                            me._generatedElements.add(clone)
-
-                            copiedElements.push(clone)
-                            element.parentElement.insertBefore(clone,element)
-                            remove_callbacks.push(function(){clone.parentElement?.removeChild(clone)})
-
-                            let inheritedBindings=Bindings.getForElement(clone)
-                            inheritedBindings.inherit(bindings_in)
-                            inheritedBindings.add(new Binding(item_name,item))
-                            
-                            // check if container is free-standing expression, e.g. "items", not a compound like "data.items" or "data(mydata).values[3]"
-                            // check by assigning a value to the container expression
-                            try{
-                                eval("let "+container_name+"=2")
-                                inheritedBindings.add(new Binding(container_name,container))
-                            }catch(e){}
-                        }
-                    }
-
-                    remove_callbacks=remove_callbacks.concat(me.init(copiedElements).remove)
+                const _container_value=eval(bindings_in.expand("bindings_in")+container_name)
+                if(_container_value==null)continue;
+                /** @type{any} */
+                let container=undefined
+                try{
+                    container=this.ensureManagedObject(_container_value)
+                }catch(e){
+                    console.log("expanding",bindings_in.expand("bindings_in")+container_name)
+                    console.log("pfor expression",p_for_attribute)
+                    console.log(eval(bindings_in.expand("bindings_in")+"row"))
+                    console.error("failed to manage object",_container_value)
+                    throw e
                 }
 
-                this.registerCallback(this.managedProxies.get(container),(obj,property,newval)=>{
-                    applyPFor(false)
-                })
+                // check if container is free-standing expression, e.g. "items", not a compound like "data.items" or "data(mydata).values[3]"
+                let make_container_binding_for_element=false
+                try{
+                    eval("let "+container_name)
+                    make_container_binding_for_element=true
+                }catch(e){}
+                
+                const me=this
 
-                applyPFor(true)
+                // instantiate all of the items in this list for each item in the container
+                /** @type {HTMLElement[]|HTMLCollection} */
+                let element_templates=[]
+                let elementTemplateDocumentFragment=templateElementContent(element)
+                if(elementTemplateDocumentFragment){
+                    element_templates=elementTemplateDocumentFragment.children
+                }else{
+                    element_templates=element.children
+                }
+
+                /** @type{ Map< number, object & { elements: Element[], delete: ()=>void } > } */
+                let instances=new Map()
+
+                /**
+                 * 
+                 * @param {any} item 
+                 * @param {number} index 
+                 */
+                function instantiate(item,index){
+                    // list of all elements instantiated from this one item
+                    let newElements=[]
+
+                    //
+                    let old_instance_at_index=instances.get(index)
+                    if(old_instance_at_index){
+                        old_instance_at_index.delete()
+                        instances.delete(index)
+                    }
+
+                    /** @type {object&{pos:InsertPosition,el:Element}} */
+                    let reference_element={pos:"afterend",el:element}
+                    let previous_element=instances.get(index-1)
+                    if(previous_element && previous_element.elements[previous_element.elements.length-1].parentElement){
+                        reference_element={pos:"afterend",el:previous_element.elements[previous_element.elements.length-1]}
+                    }
+                    let next_element=instances.get(index+1)
+                    if(next_element && !previous_element && next_element.elements[0].parentElement){
+                        reference_element={pos:"beforebegin",el:next_element.elements[0]}
+                    }
+
+                    for(let element_template of element_templates){
+                        let clone=element_template.cloneNode(true)
+                        if(!(clone instanceof Element)){console.error(clone,"not instanceof Element");throw new Error("clone not instanceof Element")}
+                        clone.setAttribute("_pClonedFromTemplate","true") // identify clones in dom
+
+                        newElements.push(clone)
+
+                        let inheritedBindings=Bindings.getForElement(clone)
+                        inheritedBindings.inherit(bindings_in)
+                        inheritedBindings.add(new Binding(item_name,item))
+                        
+                        if(make_container_binding_for_element){
+                            inheritedBindings.add(new Binding(container_name,container))
+                        }
+
+                        // insert clone into dom
+                        reference_element.el.insertAdjacentElement(reference_element.pos,clone)
+
+                        // insert additional clones after the previous one
+                        reference_element={pos:"afterend",el:clone}
+
+                        me._generatedElements.add(clone)
+                    }
+
+                    // init element and get cleanup callbacks
+                    let remove_self_from_everything=me.init(newElements).remove
+
+                    instances.set(index,{
+                        elements:newElements,
+                        delete:function(){
+                            for(let el of newElements){
+                                el.parentElement?.removeChild(el)
+                                me._generatedElements.delete(el)
+                            }
+                            remove_self_from_everything.forEach(f=>f())
+                        }
+                    })
+                }
+
+                /** @ts-ignore - container is iterable */
+                for(let [index,item] of container.entries()){
+                    instantiate(item,index)
+                }
+
+                let regCBrm=this.registerCallback(this.managedProxies.get(container),(obj,property,newval)=>{
+
+                    // if length is set, remove all instances that are out of bounds
+                    // (ignore case where length is set to value larger than current size)
+                    if(property=="length"){
+                        for(let i=instances.size;i>newval && i>=0;i--){
+                            instances.get(i)?.delete()
+                        }
+                        return
+                    }
+
+                    // check if property looks like an index
+                    let index=null
+                    try{
+                        /// @ts-ignore
+                        index=parseFloat(property)
+                    }catch(e){
+                        return;
+                    }
+                    // if property is not an index, ignore it (i.e. return)
+                    if((index==null) || index<0)return;
+
+                    instantiate(newval,index)
+                })
+                remove_callbacks=remove_callbacks.concat(regCBrm)
             }
 
             // initialize all child elements
