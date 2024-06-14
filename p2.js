@@ -62,6 +62,9 @@ class Bindings{
         /** @type {Map<number,Binding>} */
         this.value_map=new Map()
 
+        /** @type{(object&{index:number})[]} */
+        this.last_expansion=[]
+
         this.add(init_bindings)
     }
     /**
@@ -157,6 +160,7 @@ class Bindings{
      */
     _expandBinding(binding,binding_varname){
         let new_binding_index=this._createBindingIndex(binding)
+        this.last_expansion.push({index:new_binding_index})
         return "let "+binding.name+"="+binding_varname+"._getBindingValue("+new_binding_index+").value ; "
     }
 
@@ -200,6 +204,12 @@ class Bindings{
      * @returns {string}
      */
     expand(bindings_varname,existing_bindings=null){
+        for(let old_binding_expand_info of this.last_expansion){
+            // delete old binding info at this index
+            this.value_map.delete(old_binding_expand_info.index)
+        }
+        this.last_expansion=[]
+
         // this returns a map of all bindings, including inherited bindings
         // it also throws on duplicate binding names, if the bindings dont point to the same value
         if(!existing_bindings)
@@ -250,7 +260,6 @@ class Bindings{
         return ret
     }
 }
-
 
 /**
  * return the content of a template element, or null if the element is not a template
