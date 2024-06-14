@@ -373,7 +373,7 @@ class Manager{
             /// @ts-ignore
             this.objTextNodes.set(element,textNodes)
         }
-        let textNodes=this.objTextNodes.get(element)
+        const textNodes=this.objTextNodes.get(element)
         let remove_callbacks_from_textnodes=[]
         if(textNodes!=null && textNodes.length>0){
             for(let textNode of textNodes){
@@ -452,7 +452,7 @@ class Manager{
 
                     let templateCopy=template+""
                     for(let entry of entries){
-                        let newValue=entryValueCache.get(entry)
+                        const newValue=entryValueCache.get(entry)
                         templateCopy=templateCopy.replace("{{"+entry+"}}",newValue)
                     }
                     textNode.node.nodeValue=templateCopy
@@ -466,20 +466,32 @@ class Manager{
         // iterate over all attributes and replace matches in their values
         const bindings_str=bindings_.expand("bindings_")
         for(let attributeIndex=0;attributeIndex<element.attributes.length;attributeIndex++){
-            let attribute=element.attributes.item(attributeIndex)
+            const attribute=element.attributes.item(attributeIndex)
             if(!attribute)continue;
 
             let remove_callbacks=[]
-            let raw_value=attribute.value
+            const raw_value=attribute.value
             let new_value=raw_value
             for(let entry of getReplacements(raw_value)){
-                let replaced_value=eval(bindings_str+entry)
+                EvalStack.begin()
+                const replaced_value=eval(bindings_str+entry)
+                const stack=EvalStack.end()
+
                 new_value=new_value.replace("{{"+entry+"}}",replaced_value)
 
-                remove_callbacks.push(this.registerCallback(replaced_value,(o,p,n)=>{
+                /** @type{ProxySetterInterceptCallback} */
+                const callbackOnValueChange=function(o,p,n){
+                    if(attribute==null)return;
+
                     const bindings_str=bindings_.expand("bindings_")
                     attribute.value=raw_value.replace("{{"+entry+"}}",eval(bindings_str+entry))
-                }))
+                }
+
+                if(stack.length>0){
+                    remove_callbacks.push(this.registerCallback(stack[stack.length-1][0],callbackOnValueChange,stack[stack.length-1][1]))
+                }else{
+                    remove_callbacks.push(this.registerCallback(replaced_value,callbackOnValueChange))
+                }
             }
             attribute.value=new_value
    
@@ -528,7 +540,7 @@ class Manager{
                 me.objCallbacks.set(obj,inheritedCallbacks)
             }
             try{
-                let _prox=new Proxy(obj,{})
+                let _proxy=new Proxy(obj,{})
             }catch(e){
                 console.error("failed to create proxy for object",obj)
                 throw e
@@ -540,7 +552,7 @@ class Manager{
                         /// @ts-ignore
                         EvalStack.stack.push([target,prop])
                     }
-                    let ret=Reflect.get(target,prop)
+                    const ret=Reflect.get(target,prop)
 
                     // if prop is in this list of properties, return the value of the property immediately
                     if(typeof prop == "symbol" || typeof ret == "function" || ["valueOf","toString","length"].includes(prop)){
@@ -556,9 +568,9 @@ class Manager{
                 },
                 set:(target,prop,value)=>{
                     Reflect.set(target,prop,value)
-                    let namedObjectCallbacksForObj=me.namedObjCallbacks.get(obj)
+                    const namedObjectCallbacksForObj=me.namedObjCallbacks.get(obj)
                     if(namedObjectCallbacksForObj){
-                        let callbacks=namedObjectCallbacksForObj.get(prop)
+                        const callbacks=namedObjectCallbacksForObj.get(prop)
                         if(callbacks){
                             for(let callback of callbacks){
                                 callback(target,prop,value)
@@ -670,7 +682,7 @@ class Manager{
                     if(entry.isIntersecting){
                         this._firstDrawCompleted.add(element)
 
-                        let callbacks=this._firstDrawCallbacks.get(element)
+                        const callbacks=this._firstDrawCallbacks.get(element)
                         if(callbacks){
                             for(let cb of callbacks){
                                 cb()
@@ -776,7 +788,7 @@ class Manager{
                 // instantiate all of the items in this list for each item in the container
                 /** @type {HTMLElement[]|HTMLCollection} */
                 let element_templates=[]
-                let elementTemplateDocumentFragment=templateElementContent(element)
+                const elementTemplateDocumentFragment=templateElementContent(element)
                 if(elementTemplateDocumentFragment){
                     element_templates=elementTemplateDocumentFragment.children
                 }else{
@@ -804,23 +816,23 @@ class Manager{
 
                     /** @type {object&{pos:InsertPosition,el:Element}} */
                     let reference_element={pos:"afterend",el:element}
-                    let previous_element=instances.get(index-1)
+                    const previous_element=instances.get(index-1)
                     if(previous_element && previous_element.elements[previous_element.elements.length-1].parentElement){
                         reference_element={pos:"afterend",el:previous_element.elements[previous_element.elements.length-1]}
                     }
-                    let next_element=instances.get(index+1)
+                    const next_element=instances.get(index+1)
                     if(next_element && !previous_element && next_element.elements[0].parentElement){
                         reference_element={pos:"beforebegin",el:next_element.elements[0]}
                     }
 
                     for(let element_template of element_templates){
-                        let clone=element_template.cloneNode(true)
+                        const clone=element_template.cloneNode(true)
                         if(!(clone instanceof Element)){console.error(clone,"not instanceof Element");throw new Error("clone not instanceof Element")}
                         clone.setAttribute("_pClonedFromTemplate","true") // identify clones in dom
 
                         newElements.push(clone)
 
-                        let inheritedBindings=Bindings.getForElement(clone)
+                        const inheritedBindings=Bindings.getForElement(clone)
                         inheritedBindings.inherit(bindings_in)
                         inheritedBindings.add(new Binding(item_name,item))
                         
@@ -857,7 +869,7 @@ class Manager{
                     instantiate(item,index)
                 }
 
-                let regCBrm=this.registerCallback(this.managedProxies.get(container),(obj,property,newval)=>{
+                const regCBrm=this.registerCallback(this.managedProxies.get(container),(obj,property,newval)=>{
 
                     // if length is set, remove all instances that are out of bounds
                     // (ignore case where length is set to value larger than current size)
@@ -928,7 +940,7 @@ class Manager{
                     break
                 }
 
-                let elementValuePropertyName
+                let elementValuePropertyName=null
                 if(elementIsCheckbox){
                     element.checked=initial_value
                     elementValuePropertyName="checked"
@@ -976,14 +988,14 @@ class Manager{
                 if(!attribute)continue;
 
                 if(attribute.name.startsWith("p:on-")){
-                    let eventnames=attribute.name.slice("p:on-".length)
-                    let code=attribute.value
+                    const eventnames=attribute.name.slice("p:on-".length)
+                    const code=attribute.value
                     if(code){
                         for(let event_name of eventnames.split(",")){
                             event_name=event_name.trim()
                             if(event_name.length==0)continue;
 
-                            let element_bindings=Bindings.getForElement(element)
+                            const element_bindings=Bindings.getForElement(element)
                             element.addEventListener(event_name,(e)=>{
                                 /** provide local variable 'event' for use in the eval statement */
                                 let event=e
