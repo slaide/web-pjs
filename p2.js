@@ -48,8 +48,6 @@ class Binding{
     }
 }
 class Bindings{
-    static _new_value_index=0
-
     /**
      * create new bindings set
      * @param {Map<string,Binding>|Binding[]|Binding} init_bindings 
@@ -59,11 +57,6 @@ class Bindings{
         this.bindings=new Map()
         /** @type {Bindings[]} */
         this.inherited_bindings=[]
-        /** @type {Map<number,Binding>} */
-        this.value_map=new Map()
-
-        /** @type{(object&{index:number})[]} */
-        this.last_expansion=[]
 
         this.add(init_bindings)
     }
@@ -116,39 +109,29 @@ class Bindings{
             console.error("self",this,"attempted to inherit from",bindings)
         }
     }
-    /**
-     * used internally to store binding values in a map
-     * @param {Binding} binding 
-     * @return {number} the index of the value in the value map to be used in eval'able code via _getBindingValue
-     */
-    _createBindingIndex(binding){
-        let binding_map_index=Bindings._new_value_index
-        this.value_map.set(binding_map_index,binding)
-        Bindings._new_value_index+=1
-        return binding_map_index
-    }
+
     /**
      * used internally to retrieve binding values through eval'able code (which itself a string, this method circumvents data serialization)
      * 
-     * binding_index argument is created by _createBindingIndex
+     * binding_name argument is the name of an existing binding
      * 
-     * @param {number} binding_index 
+     * @param {string} binding_name
      * @returns {Binding}
      */
-    _getBindingValue(binding_index){
-        let ret=this.value_map.get(binding_index)
+    _getBindingValue(binding_name){
+        let ret=this.bindings.get(binding_name)
+        if(ret)
+            return ret
+
         // check inherited bindings
         for(let inheritedBindingList of this.inherited_bindings){
-            if(ret)
-                break
-
             try{
-                ret=inheritedBindingList._getBindingValue(binding_index)
+                ret=inheritedBindingList._getBindingValue(binding_name)
             }catch(e){}
         }
 
         if(!ret)
-            throw new Error("binding index not found"+binding_index)
+            throw new Error("binding not found"+binding_name)
 
         return ret
     }
@@ -159,9 +142,7 @@ class Bindings{
      * @returns {string}
      */
     _expandBinding(binding,binding_varname){
-        let new_binding_index=this._createBindingIndex(binding)
-        this.last_expansion.push({index:new_binding_index})
-        return "let "+binding.name+"="+binding_varname+"._getBindingValue("+new_binding_index+").value ; "
+        return "let "+binding.name+"="+binding_varname+"._getBindingValue(`"+binding.name+"`).value ; "
     }
 
     /**
@@ -204,12 +185,6 @@ class Bindings{
      * @returns {string}
      */
     expand(bindings_varname,existing_bindings=null){
-        for(let old_binding_expand_info of this.last_expansion){
-            // delete old binding info at this index
-            this.value_map.delete(old_binding_expand_info.index)
-        }
-        this.last_expansion=[]
-
         // this returns a map of all bindings, including inherited bindings
         // it also throws on duplicate binding names, if the bindings dont point to the same value
         if(!existing_bindings)
@@ -910,7 +885,13 @@ class Manager{
                 bindings.inherit(bindings_in)
                 // add local variable "element"
                 bindings.add(new Binding("element",element))
-                eval(bindings.expand("bindings")+p_init_attribute)
+                const eval_str=bindings.expand("bindings")+p_init_attribute
+                try{
+                    eval(eval_str)
+                }catch(e){
+                    console.error("error evaling",eval_str)
+                    throw e
+                }
             }
 
             const p_init_vis_attribute=element.getAttribute("p:init-vis")
@@ -999,7 +980,14 @@ class Manager{
                             element.addEventListener(event_name,(e)=>{
                                 /** provide local variable 'event' for use in the eval statement */
                                 let event=e
-                                eval(element_bindings.expand("element_bindings")+code)
+                                const e_str=element_bindings.expand("element_bindings")+code
+                                try{
+                                    eval(e_str)
+                                }catch(e){
+                                    console.log(element_bindings)
+                                    console.error("error in event handler",e_str)
+                                    throw e
+                                }
                             })
                         }
                     }
