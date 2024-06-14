@@ -870,6 +870,11 @@ class Manager{
                     instantiate(newval,index)
                 })
                 remove_callbacks=remove_callbacks.concat(regCBrm)
+                remove_callbacks=remove_callbacks.concat(function(){
+                    for(let instance of instances.values()){
+                        instance.delete()
+                    }
+                })
             }
 
             // initialize all child elements
