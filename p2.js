@@ -169,17 +169,20 @@ class Bindings{
      */
     _getBindingMap(){
         let ret=new Map()
-        for(let [name,binding] of this.bindings){
-            if(ret.has(name) && binding.value!==ret.get(name).value){console.error("duplicate binding",binding,"conflicts with",ret.get(name))}
-            ret.set(name,binding)
-        }
-        for(let inheritedBindingList of this.inherited_bindings){
-            let inheritedBindings=inheritedBindingList._getBindingMap()
-            for(let [name,binding] of inheritedBindings){
-                if(ret.has(name) && binding.value!==ret.get(name).value){console.error("duplicate binding",binding,"conflicts with",ret.get(name));continue}
+        /** @param {Map<string,Binding>} bindings */
+        function iterAndSetBindings(bindings){
+            for(let [name,binding] of bindings){
+                if(ret.has(name) && binding.value!==ret.get(name).value){
+                    console.warn("duplicate binding",binding,"conflicts with",ret.get(name))
+                    continue
+                }
                 ret.set(name,binding)
             }
         }
+        // iter over own bindings
+        iterAndSetBindings(this.bindings)
+        // then descend into inherited bindings
+        this.inherited_bindings.forEach(b=>iterAndSetBindings(b._getBindingMap()))
         return ret
     }
 
