@@ -362,10 +362,10 @@ class Manager{
 
                 /**
                  * replace all matches to {{...}} with their evaluated values
-                 * @param {boolean} registerFromStack if true, registers callbacks to update the template text when a value changes
+                 * @param {boolean} init if true, registers callbacks to update the template text when a value changes
                  * @returns {(()=>void)[]}
                  */
-                function replace(registerFromStack=false){
+                function replace(init=false){
                     /** save entries where the value has changed @type {Set<string>} */
                     let entryValueChanged=new Set()
 
@@ -376,7 +376,7 @@ class Manager{
                     const bindings_str=bindings_.expand("bindings_")
 
                     for(let entry of entries){
-                        if(registerFromStack)
+                        if(init)
                             EvalStack.begin()
 
                         /** evaluate current value of the entry */
@@ -393,7 +393,7 @@ class Manager{
                             continue;
                         }
 
-                        if(registerFromStack){
+                        if(init){
                             let stack=EvalStack.end()
                             if(stack.length===0){
                                 //console.warn("stack is empty. maybe object is not managed? registering interval callback instead.","element:",element,"entry: "+entry,"( =",newValue,")")
@@ -409,7 +409,7 @@ class Manager{
                         }
                     }
 
-                    if(registerFromStack && require_timedIntervalReplacement){
+                    if(init && require_timedIntervalReplacement){
                         const onIntervalCallback=()=>{
                             replace(false)
                         }
@@ -463,9 +463,25 @@ class Manager{
                 }
 
                 if(stack.length>0){
-                    remove_callbacks.push(this.registerCallback(stack[stack.length-1][0],callbackOnValueChange,stack[stack.length-1][1]))
+                    remove_callbacks.push(
+                        this.registerCallback(
+                            stack[stack.length-1][0],
+                            callbackOnValueChange,
+                            stack[stack.length-1][1]
+                        )
+                    )
                 }else{
-                    remove_callbacks.push(this.registerCallback(replaced_value,callbackOnValueChange))
+                    // add callbackOnValueChange to timer callback on _p
+                    function onIntervalCallback(){
+                        // @ts-ignore
+                        callbackOnValueChange(null,null,null)
+                    }
+                    this._onIntervalCallbacks.push(onIntervalCallback)
+
+                    remove_callbacks.push(function(){
+                        let index=me._onIntervalCallbacks.indexOf(onIntervalCallback)
+                        me._onIntervalCallbacks.splice(index,1)
+                    })
                 }
             }
             attribute.value=new_value
