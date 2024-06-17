@@ -454,12 +454,25 @@ class Manager{
 
                 new_value=new_value.replace("{{"+entry+"}}",replaced_value)
 
+                /**
+                 * value cache to avoid redundant updates (which are costly on attributes)
+                 * @type{Map<string,any>}
+                 */
+                const valuecache=new Map()
+
                 /** @type{ProxySetterInterceptCallback} */
                 const callbackOnValueChange=function(o,p,n){
                     if(attribute==null)return;
 
                     const bindings_str=bindings_.expand("bindings_")
-                    attribute.value=raw_value.replace("{{"+entry+"}}",eval(bindings_str+entry))
+
+                    // cache value
+                    let freshvalue=eval(bindings_str+entry)
+                    if(valuecache.has(entry) && valuecache.get(entry)===freshvalue){
+                        return
+                    }
+                    valuecache.set(entry,freshvalue)
+                    attribute.value=raw_value.replace("{{"+entry+"}}",freshvalue)
                 }
 
                 if(stack.length>0){
