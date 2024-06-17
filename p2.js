@@ -574,6 +574,7 @@ class Manager{
      * obj should be the regular (non-proxy) object
      * @param {object} obj 
      * @param {(o:object,property:PropertyKey,new_value:any)=>void} callback 
+     * @param {PropertyKey?} key
      * @return {(()=>void)[]} - returns a function that can be called to remove the callback
      */
     registerCallback(obj,callback,key=null){
