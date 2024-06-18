@@ -640,17 +640,13 @@ class Manager{
                 this_obj_callbacks_for_key=[]
                 this_obj_named_callbacks.set(key,this_obj_callbacks_for_key)
             }
-
-            let i=this_obj_callbacks_for_key.push(callback)
+            this_obj_callbacks_for_key.push(callback)
 
             return [function(){
-                let i=0
-                for(let f of this_obj_callbacks_for_key){
-                    if(f==callback){
-                        this_obj_callbacks_for_key.splice(i,1)
-                    }
-                    i+=1
-                }
+                let i=this_obj_callbacks_for_key.indexOf(callback)
+                if(i<0){return;}
+
+                this_obj_callbacks_for_key.splice(i,1)
             }]
         }else{
             let obj_callbacks=this.objCallbacks.get(obj)
@@ -661,13 +657,9 @@ class Manager{
             obj_callbacks.push(callback)
 
             return [function(){
-                let i=0
-                for(let f of obj_callbacks){
-                    if(f==callback){
-                        obj_callbacks.splice(i,1)
-                    }
-                    i+=1
-                }
+                let i=obj_callbacks.indexOf(callback)
+                if(i<0){return;}
+                obj_callbacks.splice(i,1)
             }]
         }
     }
