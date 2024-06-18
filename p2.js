@@ -423,6 +423,9 @@ class Manager{
 
                         remove_callbacks.push(function(){
                             let index=me._onIntervalCallbacks.indexOf(onIntervalCallback)
+                            if(index<0){
+                                return
+                            }
                             me._onIntervalCallbacks.splice(index,1)
                         })
                     }
@@ -507,6 +510,9 @@ class Manager{
 
                     remove_callbacks.push(function(){
                         let index=me._onIntervalCallbacks.indexOf(onIntervalCallback)
+                        if(index<0){
+                            return
+                        }
                         me._onIntervalCallbacks.splice(index,1)
                     })
                 }
