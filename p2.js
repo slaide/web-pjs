@@ -360,6 +360,14 @@ class Manager{
 
                 const entryValueCache=new Map()
 
+                const bindings_str=bindings_.expand("bindings_")
+                const entryFunctions=new Map()
+                for(let entry of entries){
+                    if(entryFunctions.has(entry)){continue;}
+                    let entryfunc=new Function("bindings_",bindings_str+"; return "+entry)
+                    entryFunctions.set(entry,entryfunc)
+                }
+
                 /**
                  * replace all matches to {{...}} with their evaluated values
                  * @param {boolean} init if true, registers callbacks to update the template text when a value changes
@@ -373,8 +381,6 @@ class Manager{
 
                     let require_timedIntervalReplacement=false
 
-                    const bindings_str=bindings_.expand("bindings_")
-
                     for(let entry of entries){
                         if(init)
                             EvalStack.begin()
@@ -382,7 +388,7 @@ class Manager{
                         /** evaluate current value of the entry */
 
                         try{
-                            const newValue=eval(bindings_str+entry)
+                            const newValue=entryFunctions.get(entry)(bindings_)
                             /** if the value has changed, save new value and make note that the value for this entry has changed */
                             if(!(entryValueCache.has(entry) && entryValueCache.get(entry)===newValue)){
                                 entryValueChanged.add(entry)
@@ -446,28 +452,36 @@ class Manager{
 
             let remove_callbacks=[]
             const raw_value=attribute.value
+            const entries=getReplacements(raw_value)
+
+            /**
+             * value cache to avoid redundant updates (which are costly on attributes)
+             * @type{Map<string,any>}
+             */
+            const valuecache=new Map()
+
+            const entryFunctions=new Map()
+            for(let entry of entries){
+                if(entryFunctions.has(entry)){continue;}
+                let entryfunc=new Function("bindings_",bindings_str+"; return "+entry)
+                entryFunctions.set(entry,entryfunc)
+            }
+
             let new_value=raw_value
-            for(let entry of getReplacements(raw_value)){
+            for(let entry of entries){
                 EvalStack.begin()
-                const replaced_value=eval(bindings_str+entry)
+
+                const replaced_value=entryFunctions.get(entry)(bindings_)
                 const stack=EvalStack.end()
-
+                
                 new_value=new_value.replace("{{"+entry+"}}",replaced_value)
-
-                /**
-                 * value cache to avoid redundant updates (which are costly on attributes)
-                 * @type{Map<string,any>}
-                 */
-                const valuecache=new Map()
 
                 /** @type{ProxySetterInterceptCallback} */
                 const callbackOnValueChange=function(o,p,n){
                     if(attribute==null)return;
 
-                    const bindings_str=bindings_.expand("bindings_")
-
                     // cache value
-                    let freshvalue=eval(bindings_str+entry)
+                    const freshvalue=entryFunctions.get(entry)(bindings_)
                     if(valuecache.has(entry) && valuecache.get(entry)===freshvalue){
                         return
                     }
@@ -774,10 +788,6 @@ class Manager{
                 try{
                     container=this.ensureManagedObject(_container_value)
                 }catch(e){
-                    console.log("expanding",bindings_in.expand("bindings_in")+container_name)
-                    console.log("pfor expression",p_for_attribute)
-                    console.log(eval(bindings_in.expand("bindings_in")+"row"))
-                    console.error("failed to manage object",_container_value)
                     throw e
                 }
 
@@ -951,6 +961,9 @@ class Manager{
                     break
                 }
 
+                const bindings=Bindings.getForElement(element)
+                const bindings_str=bindings.expand("bindings")
+
                 let elementValuePropertyName=null
                 if(elementIsCheckbox){
                     element.checked=initial_value
@@ -959,6 +972,10 @@ class Manager{
                     element.value=initial_value
                     elementValuePropertyName="value"
                 }
+
+                // pre-compile functions to apply changes to the element's attribute
+                const applyAttributeChangeFromJS2DOM=new Function("element",bindings_str+"element."+elementValuePropertyName+"="+p_bind_attribute)
+                const applyAttributeChangeFromDOM2JS=new Function("element",bindings_str+p_bind_attribute+"=element."+elementValuePropertyName)
 
                 /**
                  * block recursion, e.g.:
@@ -971,21 +988,15 @@ class Manager{
                 this.registerCallback(eval_stack[0][0],(o,p,n)=>{
                     if(writeInputValueBack){return;}
 
-                    const bindings=Bindings.getForElement(element)
-                    const bindings_str=bindings.expand("bindings")
-
                     // set new value on input element
-                    eval(bindings_str+"element."+elementValuePropertyName+"="+p_bind_attribute)
+                    applyAttributeChangeFromJS2DOM(element)
                 },eval_stack[0][1])
 
                 // register callback to reflect DOM value changes in js
                 element.addEventListener("input",(event)=>{
                     writeInputValueBack=true
 
-                    const bindings=Bindings.getForElement(element)
-                    const bindings_str=bindings.expand("bindings")
-
-                    eval(bindings_str+p_bind_attribute+"=element."+elementValuePropertyName)
+                    applyAttributeChangeFromDOM2JS(element)
 
                     writeInputValueBack=false
                 })
@@ -998,24 +1009,23 @@ class Manager{
                 let attribute=element.attributes.item(attributeIndex)
                 if(!attribute)continue;
 
+                const element_bindings=Bindings.getForElement(element)
+
                 if(attribute.name.startsWith("p:on-")){
                     const eventnames=attribute.name.slice("p:on-".length)
                     const code=attribute.value
                     if(code){
+                        const call_event_listener=new Function("event","element_bindings",element_bindings.expand("element_bindings")+" ; let e=event ; "+code)
                         for(let event_name of eventnames.split(",")){
                             event_name=event_name.trim()
                             if(event_name.length==0)continue;
 
-                            const element_bindings=Bindings.getForElement(element)
                             element.addEventListener(event_name,(e)=>{
                                 /** provide local variable 'event' for use in the eval statement */
-                                let event=e
-                                const e_str=element_bindings.expand("element_bindings")+code
                                 try{
-                                    eval(e_str)
+                                    call_event_listener(e,element_bindings)
                                 }catch(e){
-                                    console.log(element_bindings)
-                                    console.error("error in event handler",e_str)
+                                    console.error("error in event handler",code,"bindings:",element_bindings)
                                     throw e
                                 }
                             })
