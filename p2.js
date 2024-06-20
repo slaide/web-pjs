@@ -972,8 +972,8 @@ class Manager{
                 }
 
                 // pre-compile functions to apply changes to the element's attribute
-                const applyAttributeChangeFromJS2DOM=new Function("element",bindings_str+"element."+elementValuePropertyName+"="+p_bind_attribute)
-                const applyAttributeChangeFromDOM2JS=new Function("element",bindings_str+p_bind_attribute+"=element."+elementValuePropertyName)
+                const applyAttributeChangeFromJS2DOM=new Function("element","bindings",bindings_str+"element."+elementValuePropertyName+"="+p_bind_attribute)
+                const applyAttributeChangeFromDOM2JS=new Function("element","bindings",bindings_str+p_bind_attribute+"=element."+elementValuePropertyName)
 
                 /**
                  * block recursion, e.g.:
@@ -987,14 +987,14 @@ class Manager{
                     if(writeInputValueBack){return;}
 
                     // set new value on input element
-                    applyAttributeChangeFromJS2DOM(element)
+                    applyAttributeChangeFromJS2DOM(element,bindings)
                 },eval_stack[0][1])
 
                 // register callback to reflect DOM value changes in js
                 element.addEventListener("input",(event)=>{
                     writeInputValueBack=true
 
-                    applyAttributeChangeFromDOM2JS(element)
+                    applyAttributeChangeFromDOM2JS(element,bindings)
 
                     writeInputValueBack=false
                 })
@@ -1013,15 +1013,15 @@ class Manager{
                     const eventnames=attribute.name.slice("p:on-".length)
                     const code=attribute.value
                     if(code){
-                        const call_event_listener=new Function("event","element_bindings",element_bindings.expand("element_bindings")+" ; let e=event ; "+code)
+                        const call_event_listener=new Function("event","element","element_bindings",element_bindings.expand("element_bindings")+" ; "+code)
                         for(let event_name of eventnames.split(",")){
                             event_name=event_name.trim()
                             if(event_name.length==0)continue;
 
-                            element.addEventListener(event_name,(e)=>{
+                            element.addEventListener(event_name,(event)=>{
                                 /** provide local variable 'event' for use in the eval statement */
                                 try{
-                                    call_event_listener(e,element_bindings)
+                                    call_event_listener(event,element,element_bindings)
                                 }catch(e){
                                     console.error("error in event handler",code,"bindings:",element_bindings)
                                     throw e
