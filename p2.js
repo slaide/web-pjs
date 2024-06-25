@@ -324,13 +324,15 @@ class Manager{
     /**
      * if obj is a proxy managing an object, return the original object
      * otherwise just return the object/argument
-     * @param {object} obj
-     * @returns {object}
+     * @template {object} T
+     * @param {T|Proxy<T>} obj
+     * @returns {T}
      */
     getUnmanaged(obj){
         if(this.managedProxies.has(obj)){
             return this.managedProxies.get(obj)
         }
+        // @ts-ignore
         return obj
     }
     /**
