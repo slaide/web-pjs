@@ -1004,6 +1004,76 @@ class Manager{
                 break
             }
 
+            // handle p:tooltip attributes
+            const p_tooltip_attribute=element.getAttribute("p:tooltip")
+            if(p_tooltip_attribute){
+                const tooltip_time_to_show_ms=350
+
+                let tooltip_content=p_tooltip_attribute
+                // do the replacement thing
+                const entries=getReplacements(p_tooltip_attribute)
+                for(let entry of entries){
+                    let entryfunc=new Function("bindings_in",bindings_in.expand("bindings_in")+"; return "+entry)
+                    tooltip_content=tooltip_content.replace("{{"+entry+"}}",entryfunc(bindings_in))
+                }
+
+                /** @type{HTMLElement?} */
+                let tooltip_element=null
+                function showTooltip(){
+                    if(tooltip_element!=null){return}
+
+                    // offset of element from top of viewport
+                    let top=element.getBoundingClientRect().top
+                    // center tooltip over element
+                    let left=element.getBoundingClientRect().left+element.getBoundingClientRect().width/2
+
+                    tooltip_element=document.createElement("div")
+                    tooltip_element.classList.add("p-tooltip")
+                    tooltip_element.textContent=tooltip_content
+
+                    tooltip_element.style.setProperty("--top-offset",top+"px")
+                    tooltip_element.style.setProperty("--left-offset",left+"px")
+
+                    document.body.appendChild(tooltip_element)
+
+                    // check if any edge of the tooltip is outside the viewport, shove it back in
+                    const tooltip_rect=tooltip_element.getBoundingClientRect()
+                    if(tooltip_rect.left<0){
+                        tooltip_element.style.setProperty("--left-offset",left-tooltip_rect.left+"px")
+                    }
+                    if(tooltip_rect.right>window.innerWidth){
+                        tooltip_element.style.setProperty("--left-offset",left-(tooltip_rect.right-window.innerWidth)+"px")
+                    }
+                    if(tooltip_rect.top<0){
+                        tooltip_element.style.setProperty("--top-offset",top+tooltip_rect.height+"px")
+                    }
+                    if(tooltip_rect.bottom>window.innerHeight){
+                        tooltip_element.style.setProperty("--top-offset",top-tooltip_rect.height+"px")
+                    }
+                }
+
+                /** @type{number?} */
+                let tooltip_time_to_show_timer=null
+                element.addEventListener("mouseenter",()=>{
+                    if(tooltip_time_to_show_timer!=null)return
+                    tooltip_time_to_show_timer=setTimeout(()=>{tooltip_time_to_show_timer=null;showTooltip()},tooltip_time_to_show_ms)
+                })
+                element.addEventListener("mouseleave",()=>{
+                    if(tooltip_time_to_show_timer!=null){
+                        clearTimeout(tooltip_time_to_show_timer)
+                        tooltip_time_to_show_timer=null
+                        return
+                    }
+
+                    if(tooltip_element){
+                        if(tooltip_element.parentElement){
+                            tooltip_element.parentElement.removeChild(tooltip_element)
+                        }
+                        tooltip_element=null
+                    }
+                })
+            }
+
             // handle p:on-* attributes, e.g. p:on-click="..."
             for(let attributeIndex=0;attributeIndex<element.attributes.length;attributeIndex++){
                 let attribute=element.attributes.item(attributeIndex)
