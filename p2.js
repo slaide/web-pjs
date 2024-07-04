@@ -956,7 +956,7 @@ class Manager{
                 EvalStack.begin()
                 const initial_value=eval(bindings_in.expand("bindings_in")+p_bind_attribute)
                 const eval_stack=EvalStack.end()
-                if(eval_stack.length==0 || eval_stack[0].length==0){
+                if(eval_stack.length==0){
                     console.error("no eval stack. maybe object is not managed?",element,p_bind_attribute)
                     break
                 }
@@ -985,12 +985,13 @@ class Manager{
                 let writeInputValueBack=false
 
                 // register callback to reflect js value changes in DOM
-                this.registerCallback(eval_stack[0][0],(o,p,n)=>{
+                const stack_bottom=eval_stack[eval_stack.length-1]
+                this.registerCallback(stack_bottom[0],(o,p,n)=>{
                     if(writeInputValueBack){return;}
 
                     // set new value on input element
                     applyAttributeChangeFromJS2DOM(element,bindings)
-                },eval_stack[0][1])
+                },stack_bottom[1])
 
                 // register callback to reflect DOM value changes in js
                 element.addEventListener("input",(event)=>{
