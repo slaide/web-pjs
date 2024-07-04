@@ -468,30 +468,41 @@ class Manager{
             const entryFunctions=new Map()
             for(let entry of entries){
                 if(entryFunctions.has(entry)){continue;}
-                let entryfunc=new Function("bindings_",bindings_str+"; return "+entry)
+                let entryfunc=new Function("element","bindings_",bindings_str+"; return "+entry)
                 entryFunctions.set(entry,entryfunc)
             }
 
-            let new_value=raw_value
+            /** replace all templates in attribute value with values from cache */
+            function replaceAll(){
+                if(attribute==null)return;
+
+                let new_value=raw_value
+                for(let entry of entries){
+                    new_value=new_value.replace("{{"+entry+"}}",valuecache.get(entry))
+                }
+                attribute.value=new_value
+            }
+
             for(let entry of entries){
                 EvalStack.begin()
-
-                const replaced_value=entryFunctions.get(entry)(bindings_)
+                // run the function to populate the value stack
+                const first_value=entryFunctions.get(entry)(element,bindings_)
                 const stack=EvalStack.end()
-                
-                new_value=new_value.replace("{{"+entry+"}}",replaced_value)
+
+                valuecache.set(entry,first_value)
 
                 /** @type{ProxySetterInterceptCallback} */
                 const callbackOnValueChange=function(o,p,n){
                     if(attribute==null)return;
 
-                    // cache value
-                    const freshvalue=entryFunctions.get(entry)(bindings_)
+                    // refresh cached value
+                    const freshvalue=entryFunctions.get(entry)(element,bindings_)
                     if(valuecache.has(entry) && valuecache.get(entry)===freshvalue){
                         return
                     }
                     valuecache.set(entry,freshvalue)
-                    attribute.value=raw_value.replace("{{"+entry+"}}",freshvalue)
+                    
+                    replaceAll()
                 }
 
                 if(stack.length>0){
@@ -519,7 +530,7 @@ class Manager{
                     })
                 }
             }
-            attribute.value=new_value
+            replaceAll()
    
             // TODO hacky solution to a common problem.. find a better way to handle this
             //
@@ -528,7 +539,7 @@ class Manager{
             // this callback below sets the value of the select element again, hopefully after all options have been generated
             if(attribute.name=="value" && element instanceof HTMLElement){
                 this._onFirstDraw(element,()=>{
-                    attribute.value=new_value
+                    replaceAll()
                 })
             }
 
