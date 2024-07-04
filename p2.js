@@ -389,8 +389,9 @@ class Manager{
 
                         /** evaluate current value of the entry */
 
+                        let newValue=undefined
                         try{
-                            const newValue=entryFunctions.get(entry)(bindings_)
+                            newValue=entryFunctions.get(entry)(bindings_)
                             /** if the value has changed, save new value and make note that the value for this entry has changed */
                             if(!(entryValueCache.has(entry) && entryValueCache.get(entry)===newValue)){
                                 entryValueChanged.add(entry)
@@ -402,17 +403,16 @@ class Manager{
                         }
 
                         if(init){
-                            let stack=EvalStack.end()
-                            if(stack.length===0){
-                                //console.warn("stack is empty. maybe object is not managed? registering interval callback instead.","element:",element,"entry: "+entry,"( =",newValue,")")
-
+                            const stack=EvalStack.end()
+                            const stack_bottom=(stack.length>0)?stack[stack.length-1]:null
+                            // stack may be populated from partial expression
+                            const stack_is_valid=stack.length>0 && newValue===stack_bottom[0][stack_bottom[1]]
+                            if(!stack_is_valid){
                                 require_timedIntervalReplacement=true
                             }else{
-                                let lastInStack=stack[stack.length-1]
-
-                                remove_callbacks.push(me.registerCallback(lastInStack[0],(o,p,n)=>{
+                                remove_callbacks.push(me.registerCallback(stack_bottom[0],(o,p,n)=>{
                                     replace(false)
-                                },lastInStack[1]))
+                                },stack_bottom[1]))
                             }
                         }
                     }
@@ -488,6 +488,9 @@ class Manager{
                 // run the function to populate the value stack
                 const first_value=entryFunctions.get(entry)(element,bindings_)
                 const stack=EvalStack.end()
+                const stack_bottom=(stack.length>0)?stack[stack.length-1]:null
+                // stack may be populated from partial expression
+                const stack_is_valid=stack.length>0 && first_value===stack_bottom[0][stack_bottom[1]]
 
                 valuecache.set(entry,first_value)
 
@@ -505,12 +508,12 @@ class Manager{
                     replaceAll()
                 }
 
-                if(stack.length>0){
+                if(stack_is_valid){
                     remove_callbacks.push(
                         this.registerCallback(
-                            stack[stack.length-1][0],
+                            stack_bottom[0],
                             callbackOnValueChange,
-                            stack[stack.length-1][1]
+                            stack_bottom[1]
                         )
                     )
                 }else{
@@ -966,8 +969,11 @@ class Manager{
 
                 EvalStack.begin()
                 const initial_value=eval(bindings_in.expand("bindings_in")+p_bind_attribute)
-                const eval_stack=EvalStack.end()
-                if(eval_stack.length==0){
+                const stack=EvalStack.end()
+                const stack_bottom=(stack.length>0)?stack[stack.length-1]:null
+                // stack may be populated from partial expression
+                const stack_is_valid=stack.length>0 && initial_value===stack_bottom[0][stack_bottom[1]]
+                if(!stack_is_valid){
                     console.error("no eval stack. maybe object is not managed?",element,p_bind_attribute)
                     break
                 }
@@ -996,7 +1002,6 @@ class Manager{
                 let writeInputValueBack=false
 
                 // register callback to reflect js value changes in DOM
-                const stack_bottom=eval_stack[eval_stack.length-1]
                 this.registerCallback(stack_bottom[0],(o,p,n)=>{
                     if(writeInputValueBack){return;}
 
