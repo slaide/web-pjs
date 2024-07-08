@@ -733,6 +733,56 @@ class Manager{
     }
     /**
      * 
+     * @param {object} obj 
+     * @param {PropertyKey} property 
+     * @param {ProxySetterInterceptCallback} callback 
+     * @returns {(()=>void)[]} function to remove the callback
+     */
+    _onPropertyChange(obj,property,callback){
+        const managed_obj=this.ensureManagedObject(obj)
+        const unmanaged_obj=this.getUnmanaged(obj)
+
+        EvalStack.begin()
+        /**@ts-ignore */
+        let currentValue=managed_obj[property]
+        const stack=EvalStack.end()
+        const stack_bottom=(stack.length>0)?stack[stack.length-1]:null
+        // stack may be populated from partial expression
+        const stack_is_valid=stack.length>0 && currentValue===stack_bottom[0][stack_bottom[1]]
+
+        if(stack_is_valid){
+            return this.registerCallback(unmanaged_obj,callback,property)
+        }else{
+            // add callbackOnValueChange to timer callback on _p
+            function onIntervalCallback(){
+                // @ts-ignore
+                let new_value=managed_obj[property]
+
+                const value_has_changed=new_value!==currentValue
+                currentValue=new_value
+
+                if(!value_has_changed){return;}
+
+                // @ts-ignore
+                callback(obj,property,new_value)
+            }
+            this._onIntervalCallbacks.push(onIntervalCallback)
+
+            const me=this
+            function remove(){
+                let index=me._onIntervalCallbacks.indexOf(onIntervalCallback)
+                if(index<0){
+                    return
+                }
+                me._onIntervalCallbacks.splice(index,1)
+            }
+
+            return [remove]
+        }
+    }
+
+    /**
+     * 
      * @param {Element[]|HTMLCollection} target_elements
      * @returns {{remove:(()=>void)[]}}
      */
@@ -793,7 +843,7 @@ class Manager{
             const p_for_attribute=element.getAttribute("p:for")
             if(p_for_attribute){
                 let [item_name,container_name]=p_for_attribute.split(" of ")
-                if(!container_name){console.error("invalid p:for attribute",p_for_attribute);continue;}
+                if(!item_name || !container_name){console.error("invalid p:for attribute",p_for_attribute);continue;}
 
                 const _container_value=eval(bindings_in.expand("bindings_in")+container_name)
                 if(_container_value==null)continue;
@@ -899,12 +949,12 @@ class Manager{
                 }
 
                 const regCBrm=this.registerCallback(this.managedProxies.get(container),(obj,property,newval)=>{
-
                     // if length is set, remove all instances that are out of bounds
                     // (ignore case where length is set to value larger than current size)
                     if(property=="length"){
                         for(let i=instances.size;i>newval && i>=0;i--){
-                            instances.get(i)?.delete()
+                            // adjust by -1 because index is 0-based
+                            instances.get(i-1)?.delete()
                         }
                         return
                     }
