@@ -599,7 +599,7 @@ class Manager{
                         return ret
                     }
 
-                    if(typeof ret=="object"){
+                    if(typeof ret=="object" && ret!=null){
                         /// @ts-ignore
                         return me.ensureManagedObject(ret,me.objCallbacks.get(obj))
                     }
@@ -609,9 +609,9 @@ class Manager{
                 set:(target,prop,value)=>{
                     Reflect.set(target,prop,value)
                     const namedObjectCallbacksForObj=me.namedObjCallbacks.get(obj)
-                    if(namedObjectCallbacksForObj){
+                    if(namedObjectCallbacksForObj!=null){
                         const callbacks=namedObjectCallbacksForObj.get(prop)
-                        if(callbacks){
+                        if(callbacks!=null){
                             for(let callback of callbacks){
                                 callback(target,prop,value)
                             }
