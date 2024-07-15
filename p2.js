@@ -290,7 +290,10 @@ class Manager{
         this.objCallbacks=new Map()
         /** @type {Map<Element,{node:ChildNode,templateText:string}[]>} */
         this.objTextNodes=new Map()
-        /** @type {Map<object,Map<PropertyKey,ProxySetterInterceptCallback[]>>} */
+        /**
+         * contains a map of property specific callbacks on regular objects (i.e. not proxies)
+         * @type {Map<object,Map<PropertyKey,ProxySetterInterceptCallback[]>>}
+         */
         this.namedObjCallbacks=new Map()
         /** @type {Set<HTMLElement>} */
         this.initializedElements=new Set()
@@ -338,7 +341,7 @@ class Manager{
     /**
      * 
      * @param {Element} element 
-     * @returns {(()=>void)[]} - returns a function that can be called to remove the generated callbacks 
+     * @returns {(()=>void)[]} returns a function that can be called to remove the generated callbacks 
      */
     replaceMatches(element){
         const me=this
@@ -351,12 +354,13 @@ class Manager{
             this.objTextNodes.set(element,textNodes)
         }
         const textNodes=this.objTextNodes.get(element)
+        /** @type{(()=>void)[]} */
         let remove_callbacks_from_textnodes=[]
         if(textNodes!=null && textNodes.length>0){
             for(let textNode of textNodes){
-                const template=textNode.templateText
+                const template_text=textNode.templateText
 
-                const entries=getReplacements(template)
+                const entries=getReplacements(template_text)
                 if(entries.length==0)
                     continue;
 
@@ -370,83 +374,23 @@ class Manager{
                     entryFunctions.set(entry,entryfunc)
                 }
 
-                /** save entries where the value has changed @type {Set<string>} */
-                let entryValueChanged=new Set()
-
-                /**
-                 * replace all matches to {{...}} with their evaluated values
-                 * @param {boolean} init if true, registers callbacks to update the template text when a value changes
-                 * @returns {(()=>void)[]}
-                 */
-                function replace(init=false){
-                    let remove_callbacks=[]
-
-                    let require_timedIntervalReplacement=false
-
-                    for(let entry of entries){
-                        if(init)
-                            EvalStack.begin()
-
-                        /** evaluate current value of the entry */
-
-                        let newValue=undefined
-                        try{
-                            newValue=entryFunctions.get(entry)(bindings_)
-                        }catch(e){
-                            // if we fail to evaluate the current entry, just go on to the next one
-                            continue;
-                        }
-
+                for(let entry of entries){
+                    remove_callbacks_from_textnodes.splice(0,0,...this.onValueChangeCallback(()=>entryFunctions.get(entry)(bindings_),function(newValue){
                         /** if the value has changed, save new value and make note that the value for this entry has changed */
                         if(!(entryValueCache.has(entry) && entryValueCache.get(entry)===newValue)){
-                            entryValueChanged.add(entry)
                             entryValueCache.set(entry,newValue)
+                        }else{
+                            return
                         }
 
-                        if(init){
-                            const stack=EvalStack.end()
-                            const stack_bottom=(stack.length>0)?stack[stack.length-1]:null
-                            // stack may be populated from partial expression
-                            const stack_is_valid=stack.length>0 && newValue===stack_bottom[0][stack_bottom[1]]
-                            if(!stack_is_valid){
-                                require_timedIntervalReplacement=true
-                            }else{
-                                remove_callbacks.push(me.registerCallback(stack_bottom[0],(o,p,n)=>{
-                                    replace(false)
-                                },stack_bottom[1]))
-                            }
+                        let templateCopy=template_text+""
+                        for(let entry of entries){
+                            const entry_value=entryValueCache.get(entry)
+                            templateCopy=templateCopy.replace("{{"+entry+"}}",entry_value)
                         }
-                    }
-
-                    if(init && require_timedIntervalReplacement){
-                        const onIntervalCallback=()=>{
-                            replace(false)
-                        }
-                        me._onIntervalCallbacks.push(onIntervalCallback)
-
-                        remove_callbacks.push(function(){
-                            let index=me._onIntervalCallbacks.indexOf(onIntervalCallback)
-                            if(index<0){
-                                return
-                            }
-                            me._onIntervalCallbacks.splice(index,1)
-                        })
-                    }
-                    
-                    if(entryValueChanged.size===0){
-                        return remove_callbacks
-                    }
-
-                    let templateCopy=template+""
-                    for(let entry of entries){
-                        const newValue=entryValueCache.get(entry)
-                        templateCopy=templateCopy.replace("{{"+entry+"}}",newValue)
-                    }
-                    textNode.node.nodeValue=templateCopy
-
-                    return remove_callbacks
+                        textNode.node.nodeValue=templateCopy
+                    }))
                 }
-                remove_callbacks_from_textnodes.push(replace(true))
             }
         }
 
@@ -456,6 +400,7 @@ class Manager{
             const attribute=element.attributes.item(attributeIndex)
             if(!attribute)continue;
 
+            /**@type{(()=>void)[]} */
             let remove_callbacks=[]
             const raw_value=attribute.value
             const entries=getReplacements(raw_value)
@@ -510,8 +455,8 @@ class Manager{
                 }
 
                 if(stack_is_valid){
-                    remove_callbacks.push(
-                        this.registerCallback(
+                    remove_callbacks.splice(0,0,
+                        ...this.registerCallback(
                             stack_bottom[0],
                             callbackOnValueChange,
                             stack_bottom[1]
@@ -547,7 +492,7 @@ class Manager{
                 })
             }
 
-            remove_callbacks_from_textnodes.push(remove_callbacks)
+            remove_callbacks_from_textnodes.splice(0,0,...remove_callbacks)
         }
 
         for(let child of element.children){
@@ -555,7 +500,7 @@ class Manager{
             if(this._generatedElements.has(child)){
                 continue;
             }
-            remove_callbacks_from_textnodes.push(this.replaceMatches(child).flat(100))
+            remove_callbacks_from_textnodes.splice(0,0,...this.replaceMatches(child))
         }
 
         return remove_callbacks_from_textnodes.flat(100)
@@ -648,21 +593,24 @@ class Manager{
      * @param {object} obj 
      * @param {(o:object,property:PropertyKey,new_value:any)=>void} callback 
      * @param {PropertyKey?} key
-     * @return {(()=>void)[]} - returns a function that can be called to remove the callback
+     * @return {(()=>void)[]} returns a function that can be called to remove the callback
      */
     registerCallback(obj,callback,key=null){
+        obj=this.getUnmanaged(obj)
+        
         if(key!=null){
-            let this_obj_named_callbacks=this.namedObjCallbacks.get(obj)
-            if(!this_obj_named_callbacks){
-                this_obj_named_callbacks=new Map()
-                this.namedObjCallbacks.set(obj,this_obj_named_callbacks)
+            if(!this.namedObjCallbacks.has(obj)){
+                this.namedObjCallbacks.set(obj,new Map())
             }
+            const this_obj_named_callbacks=this.namedObjCallbacks.get(obj)
+            if(this_obj_named_callbacks==null)throw new Error("unreachable")
 
-            let this_obj_callbacks_for_key=this_obj_named_callbacks.get(key)
-            if(!this_obj_callbacks_for_key){
-                this_obj_callbacks_for_key=[]
-                this_obj_named_callbacks.set(key,this_obj_callbacks_for_key)
+            if(!this_obj_named_callbacks.has(key)){
+                this_obj_named_callbacks.set(key,[])
             }
+            const this_obj_callbacks_for_key=this_obj_named_callbacks.get(key)
+            if(this_obj_callbacks_for_key==null)throw new Error("unreachable")
+
             this_obj_callbacks_for_key.push(callback)
 
             return [function(){
@@ -696,8 +644,8 @@ class Manager{
      * @template {any} T
      * @param {()=>T} f
      * @param {(new_value?:T)=>void} cb
-     * @param {(object&{cache:boolean?})?} flags
-     * @returns {(()=>void)[]} - returns a function that can be called to remove the callback
+     * @param {(object&{cache?:boolean,init?:boolean})?} flags
+     * @returns {(()=>void)[]} returns a function that can be called to remove the callback
      */
     onValueChangeCallback(f,cb,flags=null){
         // 4 cases:
@@ -707,10 +655,15 @@ class Manager{
         // 4) f contains managed values, and final value is non-managed attribute of managed value -> register change on property change
 
         let do_cache_value=flags?.cache||false
+        let do_init=flags?.init||true
 
         EvalStack.begin()
         let value=f()
         const stack=EvalStack.end()
+
+        if(do_init){
+            cb(value)
+        }
 
         let registerIntervalCallback=false
 
@@ -720,41 +673,49 @@ class Manager{
             const obj=stack_bottom[0]
             const key=stack_bottom[1]
 
-            //@ts-ignore
-            function wrapped_cb(_obj,_prop,v){
-                cb(v)
-            }
-
-            // case 3
-            if(this.managedValues.has(value)){
-                let this_obj_named_callbacks=this.namedObjCallbacks.get(obj)
-                if(!this_obj_named_callbacks){
-                    this_obj_named_callbacks=new Map()
-                    this.namedObjCallbacks.set(obj,this_obj_named_callbacks)
-                }
-
-                let this_obj_callbacks_for_key=this_obj_named_callbacks.get(key)
-                if(!this_obj_callbacks_for_key){
-                    this_obj_callbacks_for_key=[]
-                    this_obj_named_callbacks.set(key,this_obj_callbacks_for_key)
-                }
-                this_obj_callbacks_for_key.push(wrapped_cb)
-
-                return [function(){
-                    let i=this_obj_callbacks_for_key.indexOf(wrapped_cb)
-                    if(i<0){return;}
-
-                    this_obj_callbacks_for_key.splice(i,1)
-                }]
-            }
-
-            // case 4
             if(obj[key]===value){
-                let obj_callbacks=this.objCallbacks.get(obj)
-                if(!obj_callbacks){
-                    obj_callbacks=[]
-                    this.objCallbacks.set(obj,obj_callbacks)
+                //@ts-ignore
+                function wrapped_cb(_obj,_prop,v){
+                    if(_prop!=key)throw new Error("BUG - property mismatch "+_prop+"!="+key)
+
+                    cb(v)
                 }
+
+                // case 3
+
+                if(!this.managedValues.has(value)){
+                    let unwrapped_obj=this.getUnmanaged(obj)
+        
+                    if(!this.namedObjCallbacks.has(unwrapped_obj)){
+                        this.namedObjCallbacks.set(unwrapped_obj,new Map())
+                    }
+                    let this_obj_named_callbacks=this.namedObjCallbacks.get(unwrapped_obj)
+                    if(!this_obj_named_callbacks)throw new Error("unreachable")
+
+                    if(!this_obj_named_callbacks.has(key)){
+                        this_obj_named_callbacks.set(key,[])
+                    }
+                    const this_obj_callbacks_for_key=this_obj_named_callbacks.get(key)
+                    if(!this_obj_callbacks_for_key)throw new Error("unreachable")
+
+                    this_obj_callbacks_for_key.push(wrapped_cb)
+
+                    return [function(){
+                        let i=this_obj_callbacks_for_key.indexOf(wrapped_cb)
+                        if(i<0){return;}
+
+                        this_obj_callbacks_for_key.splice(i,1)
+                    }]
+                }
+
+                // case 4
+
+                if(!this.objCallbacks.has(obj)){
+                    this.objCallbacks.set(obj,[])
+                }
+                const obj_callbacks=this.objCallbacks.get(obj)
+                if(!obj_callbacks)throw new Error("unreachable")
+
                 obj_callbacks.push(wrapped_cb)
 
                 return [function(){
@@ -763,10 +724,13 @@ class Manager{
                     obj_callbacks.splice(i,1)
                 }]
             }
+
             // case 2
+
             registerIntervalCallback=true
         }else{
             // case 1
+
             registerIntervalCallback=true
         }
 
@@ -963,7 +927,6 @@ class Manager{
                     for(let element_template of element_templates){
                         const clone=element_template.cloneNode(true)
                         if(!(clone instanceof Element)){console.error(clone,"not instanceof Element");throw new Error("clone not instanceof Element")}
-                        clone.setAttribute("_pClonedFromTemplate","true") // identify clones in dom
 
                         newElements.push(clone)
 
