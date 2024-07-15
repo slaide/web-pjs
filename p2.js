@@ -27,10 +27,10 @@ function getTextNodes(element){
  * @returns {string[]}
  */
 function getReplacements(text){
-    let replacements=[]
+    const replacements=[]
     let match
     // match all {{...}} patterns
-    let re=/{{(.*?)}}/g
+    const re=/{{(.*?)}}/g
     while(match=re.exec(text)){
         replacements.push(match[1])
     }
@@ -370,15 +370,15 @@ class Manager{
                     entryFunctions.set(entry,entryfunc)
                 }
 
+                /** save entries where the value has changed @type {Set<string>} */
+                let entryValueChanged=new Set()
+
                 /**
                  * replace all matches to {{...}} with their evaluated values
                  * @param {boolean} init if true, registers callbacks to update the template text when a value changes
                  * @returns {(()=>void)[]}
                  */
                 function replace(init=false){
-                    /** save entries where the value has changed @type {Set<string>} */
-                    let entryValueChanged=new Set()
-
                     let remove_callbacks=[]
 
                     let require_timedIntervalReplacement=false
@@ -392,14 +392,15 @@ class Manager{
                         let newValue=undefined
                         try{
                             newValue=entryFunctions.get(entry)(bindings_)
-                            /** if the value has changed, save new value and make note that the value for this entry has changed */
-                            if(!(entryValueCache.has(entry) && entryValueCache.get(entry)===newValue)){
-                                entryValueChanged.add(entry)
-                                entryValueCache.set(entry,newValue)
-                            }
                         }catch(e){
                             // if we fail to evaluate the current entry, just go on to the next one
                             continue;
+                        }
+
+                        /** if the value has changed, save new value and make note that the value for this entry has changed */
+                        if(!(entryValueCache.has(entry) && entryValueCache.get(entry)===newValue)){
+                            entryValueChanged.add(entry)
+                            entryValueCache.set(entry,newValue)
                         }
 
                         if(init){
@@ -617,7 +618,14 @@ class Manager{
                             }
                         }
                     }
-                    me.triggerChange(target,prop,value)
+
+                    let callbacks=this.objCallbacks.get(target)
+                    if(callbacks){
+                        // flatten to handle inherited callbacks
+                        for(let callback of callbacks.flat(100)){
+                            callback(obj,prop,value)
+                        }
+                    }
                     return true
                 }
             })
@@ -643,7 +651,6 @@ class Manager{
      * @return {(()=>void)[]} - returns a function that can be called to remove the callback
      */
     registerCallback(obj,callback,key=null){
-        let me=this
         if(key!=null){
             let this_obj_named_callbacks=this.namedObjCallbacks.get(obj)
             if(!this_obj_named_callbacks){
@@ -679,23 +686,121 @@ class Manager{
             }]
         }
     }
-    /**
-     * 
-     * @param {object} obj 
-     * @param {PropertyKey} property 
-     * @param {any} new_value 
-     */
-    triggerChange(obj,property,new_value){
-        let callbacks=this.objCallbacks.get(obj)
-        if(!callbacks){return;}
 
-        // flatten to handle inherited callbacks
-        for(let callback of callbacks.flat(100)){
-            callback(obj,property,new_value)
+    /**
+     * call cb when the value of f changes (may also be called at additional times when the value is unchanged, see cache flag)
+     * 
+     * flags:
+     *     cache: if true, cb is only called when the value of f changes (f may be called more often than cb then)
+     * 
+     * @template {any} T
+     * @param {()=>T} f
+     * @param {(new_value?:T)=>void} cb
+     * @param {(object&{cache:boolean?})?} flags
+     * @returns {(()=>void)[]} - returns a function that can be called to remove the callback
+     */
+    onValueChangeCallback(f,cb,flags=null){
+        // 4 cases:
+        // 1) f contains no managed values -> eval stack empty -> register intervalcallback
+        // 2) f contains managed values, but final value is not managed -> register intervalcallback
+        // 3) f contains managed values, and final value is managed -> register callback on final value
+        // 4) f contains managed values, and final value is non-managed attribute of managed value -> register change on property change
+
+        let do_cache_value=flags?.cache||false
+
+        EvalStack.begin()
+        let value=f()
+        const stack=EvalStack.end()
+
+        let registerIntervalCallback=false
+
+        if(stack.length>0){
+            let stack_bottom=stack[stack.length-1]
+
+            const obj=stack_bottom[0]
+            const key=stack_bottom[1]
+
+            //@ts-ignore
+            function wrapped_cb(_obj,_prop,v){
+                cb(v)
+            }
+
+            // case 3
+            if(this.managedValues.has(value)){
+                let this_obj_named_callbacks=this.namedObjCallbacks.get(obj)
+                if(!this_obj_named_callbacks){
+                    this_obj_named_callbacks=new Map()
+                    this.namedObjCallbacks.set(obj,this_obj_named_callbacks)
+                }
+
+                let this_obj_callbacks_for_key=this_obj_named_callbacks.get(key)
+                if(!this_obj_callbacks_for_key){
+                    this_obj_callbacks_for_key=[]
+                    this_obj_named_callbacks.set(key,this_obj_callbacks_for_key)
+                }
+                this_obj_callbacks_for_key.push(wrapped_cb)
+
+                return [function(){
+                    let i=this_obj_callbacks_for_key.indexOf(wrapped_cb)
+                    if(i<0){return;}
+
+                    this_obj_callbacks_for_key.splice(i,1)
+                }]
+            }
+
+            // case 4
+            if(obj[key]===value){
+                let obj_callbacks=this.objCallbacks.get(obj)
+                if(!obj_callbacks){
+                    obj_callbacks=[]
+                    this.objCallbacks.set(obj,obj_callbacks)
+                }
+                obj_callbacks.push(wrapped_cb)
+
+                return [function(){
+                    let i=obj_callbacks.indexOf(wrapped_cb)
+                    if(i<0){return;}
+                    obj_callbacks.splice(i,1)
+                }]
+            }
+            // case 2
+            registerIntervalCallback=true
+        }else{
+            // case 1
+            registerIntervalCallback=true
         }
+
+        if(registerIntervalCallback){
+            const onIntervalCallback=()=>{
+                let new_value=f()
+                if(do_cache_value){
+                    if(new_value===value){
+                        return;
+                    }
+                    value=new_value
+                }
+                cb(new_value)
+            }
+            this._onIntervalCallbacks.push(onIntervalCallback)
+
+            const me=this
+            const rm_cb=function(){
+                let index=me._onIntervalCallbacks.indexOf(onIntervalCallback)
+                if(index<0){
+                    return
+                }
+                me._onIntervalCallbacks.splice(index,1)
+            }
+
+            return [rm_cb]
+        }
+        throw new Error("unreachable")
     }
 
     /**
+     * call cb when element is first drawn
+     * 
+     * cb is called immediately if element has already been drawn at least once (regardless of current visibility)
      * 
      * @param {HTMLElement} element 
      * @param {()=>void} cb 
@@ -730,55 +835,6 @@ class Manager{
             observer.observe(element)
         }
         this._firstDrawCallbacks.get(element)?.push(cb)
-    }
-    /**
-     * 
-     * @param {object} obj 
-     * @param {PropertyKey} property 
-     * @param {ProxySetterInterceptCallback} callback 
-     * @returns {(()=>void)[]} function to remove the callback
-     */
-    _onPropertyChange(obj,property,callback){
-        const managed_obj=this.ensureManagedObject(obj)
-        const unmanaged_obj=this.getUnmanaged(obj)
-
-        EvalStack.begin()
-        /**@ts-ignore */
-        let currentValue=managed_obj[property]
-        const stack=EvalStack.end()
-        const stack_bottom=(stack.length>0)?stack[stack.length-1]:null
-        // stack may be populated from partial expression
-        const stack_is_valid=stack.length>0 && currentValue===stack_bottom[0][stack_bottom[1]]
-
-        if(stack_is_valid){
-            return this.registerCallback(unmanaged_obj,callback,property)
-        }else{
-            // add callbackOnValueChange to timer callback on _p
-            function onIntervalCallback(){
-                // @ts-ignore
-                let new_value=managed_obj[property]
-
-                const value_has_changed=new_value!==currentValue
-                currentValue=new_value
-
-                if(!value_has_changed){return;}
-
-                // @ts-ignore
-                callback(obj,property,new_value)
-            }
-            this._onIntervalCallbacks.push(onIntervalCallback)
-
-            const me=this
-            function remove(){
-                let index=me._onIntervalCallbacks.indexOf(onIntervalCallback)
-                if(index<0){
-                    return
-                }
-                me._onIntervalCallbacks.splice(index,1)
-            }
-
-            return [remove]
-        }
     }
 
     /**
