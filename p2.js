@@ -639,7 +639,8 @@ class Manager{
      * call cb when the value of f changes (may also be called at additional times when the value is unchanged, see cache flag)
      * 
      * flags:
-     *     cache: if true, cb is only called when the value of f changes (f may be called more often than cb then)
+     *     cache [=false]: if true, cb is only called when the value of f changes (f may be called more often than cb then)
+     *     do_init [=true]: if true, cb is called at least once from inside this function
      * 
      * @template {any} T
      * @param {()=>T} f
@@ -858,6 +859,73 @@ class Manager{
                 if(stop_processing){
                     continue
                 }
+            }
+
+            const p_attributes_attribute=element.getAttribute("p:attributes")
+            while(p_attributes_attribute!=null){
+                let bindings=new Bindings()
+                bindings.inherit(bindings_in)
+                // add local variable "element"
+                bindings.add(new Binding("element",element))
+
+                const attribute_bindings=(()=>{
+                    try{
+                        return JSON.parse(p_attributes_attribute)
+                    }catch(e){
+                        return null
+                    }
+                })()
+                if(attribute_bindings==null){
+                    break;
+                }
+
+                const attribute_binding_names=Object.keys(attribute_bindings)
+
+                for(let attribute_name of attribute_binding_names){
+                    /* @type{string | (object&{if?:string,value:string}) } */
+                    const attribute_config=attribute_bindings[attribute_name]
+
+                    /* @type{string} string expression that evaluates to the attribute value */
+                    let attribute_value_str=""
+
+                    /* @type{string | null} string expression to evaluate if the attribute is visible or not */
+                    let conditional_visibility=null
+                    if(attribute_config instanceof Object){
+                        attribute_value_str=attribute_config.value
+                        conditional_visibility=attribute_config.if
+                    }else{
+                        attribute_value_str=attribute_config
+                    }
+
+                    /* @type{boolean} indicate current visibility state of the attribute */
+                    let currently_visible=true
+                    /* @type{string} current value of the attribute */
+                    let current_attribute_value=""
+
+                    const f=new Function("bindings",bindings.expand("bindings")+" ; return "+attribute_value_str)
+                    const rm_value_change_cb=this.onValueChangeCallback(()=>f(bindings),(new_value)=>{
+                        current_attribute_value=new_value
+                        if(currently_visible){
+                            element.setAttribute(attribute_name,current_attribute_value)
+                        }
+                    })
+                    remove_callbacks.splice(0,0,...rm_value_change_cb)
+
+                    if(conditional_visibility!=null){
+                        const f_if=new Function("bindings",bindings.expand("bindings")+" ; return "+conditional_visibility)
+                        const rm_visibility_change_cb=this.onValueChangeCallback(()=>f_if(bindings),function(new_value){
+                            currently_visible=new_value
+                            if(currently_visible){
+                                element.setAttribute(attribute_name,current_attribute_value)
+                            }else{
+                                element.removeAttribute(attribute_name)
+                            }
+                        })
+                        remove_callbacks.splice(0,0,...rm_visibility_change_cb)
+                    }
+                }
+
+                break;
             }
 
             const p_for_attribute=element.getAttribute("p:for")
