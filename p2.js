@@ -307,6 +307,28 @@ class Manager{
         /** @type {(()=>void)[]} */
         this._onIntervalCallbacks=[]
 
+        /** @type{Map<Element,((element:Element)=>void)[]>} */
+        this._elementDeletedCallbacks=new Map()
+        // https://stackoverflow.com/questions/31798816/simple-mutationobserver-version-of-domnoderemovedfromdocument
+        /** @type {MutationObserver}*/
+        this._elementDeletedObserver=new MutationObserver(()=>{
+            let removed_elements=[]
+            for(let [element,callbacks] of this._elementDeletedCallbacks){
+                if(!(document.contains(element))){
+                    callbacks.forEach(cb=>cb(element))
+                    removed_elements.push(element)
+                }
+            }
+            for(let element of removed_elements){
+                this._elementDeletedCallbacks.delete(element)
+            }
+        })
+        this._elementDeletedObserver.observe(document,{
+            childList: true,
+            subtree: true
+        })
+
+
         /** @type {Set<Element>} */
         this._generatedElements=new Set()
 
@@ -319,11 +341,35 @@ class Manager{
             }
         }
 
-        const me=this
-        setInterval(function(){
-            me._onIntervalCallbacks.forEach((f)=>f())
+        setInterval(()=>{
+            this._onIntervalCallbacks.forEach((f)=>f())
         },1e3/this._intervalFPS)
     }
+    /**
+     * register callback for an element that has been removed from the dom
+     * @param{Element} element
+     * @param{(element:Element)=>void} cb
+     */
+    onElementRemovedFromDOM(element,cb){
+        let callbacks=this._elementDeletedCallbacks.get(element)
+        if(callbacks==null){
+            this._elementDeletedCallbacks.set(element,[cb])
+        }else{
+            callbacks.push(cb)
+        }
+    }
+    /**
+     * should be called when an element has been removed from the dom (ensures that no dangling references remain)
+     * 
+     * calling this mainly improved performance
+     * @param{Element} element
+     */
+    cleanupAfterElementHasBeenRemoved(element){
+        if(this._elementDeletedCallbacks.has(element)){
+            this._elementDeletedCallbacks.delete(element)
+        }
+    }
+
     /**
      * if obj is a proxy managing an object, return the original object
      * otherwise just return the object/argument
@@ -589,7 +635,9 @@ class Manager{
         return this.ensureManagedObject(obj)
     }
     /**
-     * obj should be the regular (non-proxy) object
+     * registers a callback when a certain property on an object is changed
+     * 
+     * obj should be a regular (non-proxy) object
      * @param {object} obj 
      * @param {(o:object,property:PropertyKey,new_value:any)=>void} callback 
      * @param {PropertyKey?} key
@@ -1205,12 +1253,30 @@ class Manager{
                         tooltip_element.style.setProperty("--top-offset",top-tooltip_rect.height+"px")
                     }
                 }
+                function removeTooltip(){
+                    if(tooltip_element==null)
+                        return
+
+                    if(tooltip_element.parentElement){
+                        tooltip_element.parentElement.removeChild(tooltip_element)
+                    }
+                    tooltip_element=null
+                }
 
                 /** @type{number?} */
                 let tooltip_time_to_show_timer=null
                 element.addEventListener("mouseenter",()=>{
                     if(tooltip_time_to_show_timer!=null)return
                     tooltip_time_to_show_timer=setTimeout(()=>{tooltip_time_to_show_timer=null;showTooltip()},tooltip_time_to_show_ms)
+                })
+
+                // if element is removed from dom while tooltip is shown, remove tooltip
+                this.onElementRemovedFromDOM(element,()=>{
+                    if(tooltip_element!=null){
+                        // tooltip is currently being shown
+                        removeTooltip()
+                    }
+                    this.cleanupAfterElementHasBeenRemoved(element)
                 })
                 element.addEventListener("mouseleave",()=>{
                     if(tooltip_time_to_show_timer!=null){
@@ -1219,12 +1285,7 @@ class Manager{
                         return
                     }
 
-                    if(tooltip_element){
-                        if(tooltip_element.parentElement){
-                            tooltip_element.parentElement.removeChild(tooltip_element)
-                        }
-                        tooltip_element=null
-                    }
+                    removeTooltip()
                 })
             }
 
