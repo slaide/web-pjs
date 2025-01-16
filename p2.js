@@ -276,7 +276,7 @@ class EvalStack{
 class Manager{
     /**
      * 
-     * @param {{intervalFPS:number}?} options 
+     * @param {{}?} options 
      */
     constructor(options=null){
         document.addEventListener("DOMContentLoaded",()=>{
@@ -303,7 +303,6 @@ class Manager{
         /** @type {Set<HTMLElement>} */
         this._firstDrawCompleted=new Set()
 
-        this._intervalFPS=30
         /** @type {(()=>void)[]} */
         this._onIntervalCallbacks=[]
 
@@ -335,15 +334,12 @@ class Manager{
         /** @type {Map<Element,Element[]>} */
         this._ifParentChildrenList=new Map()
 
-        if(options){
-            if(options.intervalFPS){
-                this._intervalFPS=options.intervalFPS
-            }
-        }
-
-        setInterval(()=>{
+        const callIntervalFunction=()=>{
             this._onIntervalCallbacks.forEach((f)=>f())
-        },1e3/this._intervalFPS)
+
+            requestAnimationFrame(callIntervalFunction)
+        }
+        callIntervalFunction()
     }
     /**
      * register callback for an element that has been removed from the dom
@@ -600,8 +596,11 @@ class Manager{
                 },
                 set:(target,prop,value)=>{
                     Reflect.set(target,prop,value)
+
+                    // get callbacks registered on members on self
                     const namedObjectCallbacksForObj=me.namedObjCallbacks.get(obj)
                     if(namedObjectCallbacksForObj!=null){
+                        // get callbacks registered on name of value that has just been changed
                         const callbacks=namedObjectCallbacksForObj.get(prop)
                         if(callbacks!=null){
                             for(let callback of callbacks){
@@ -610,6 +609,7 @@ class Manager{
                         }
                     }
 
+                    // get unnamed callbacks on self
                     let callbacks=this.objCallbacks.get(target)
                     if(callbacks){
                         // flatten to handle inherited callbacks
@@ -1068,12 +1068,12 @@ class Manager{
 
                     instances.set(index,{
                         elements:newElements,
-                        delete:function(){
-                            for(let el of newElements){
+                        delete:function(newElementsOldCopy=newElements,remove_self_from_everything_arg=remove_self_from_everything){
+                            for(let el of newElementsOldCopy){
                                 el.parentElement?.removeChild(el)
                                 me._generatedElements.delete(el)
                             }
-                            remove_self_from_everything.forEach(f=>f())
+                            remove_self_from_everything_arg.forEach(f=>f())
                         }
                     })
                 }
@@ -1226,6 +1226,7 @@ class Manager{
 
                     // offset of element from top of viewport
                     let top=element.getBoundingClientRect().top
+                    let bottom=element.getBoundingClientRect().bottom
                     // center tooltip over element
                     let left=element.getBoundingClientRect().left+element.getBoundingClientRect().width/2
 
@@ -1247,9 +1248,13 @@ class Manager{
                         tooltip_element.style.setProperty("--left-offset",left-(tooltip_rect.right-window.innerWidth)+"px")
                     }
                     if(tooltip_rect.top<0){
-                        tooltip_element.style.setProperty("--top-offset",top+tooltip_rect.height+"px")
+                        // put tooltip below element, instead above
+                        tooltip_element.style.setProperty("--top-offset",bottom+"px")
+                        tooltip_element.style.setProperty("--shift-up-by-own-height","0")
                     }
                     if(tooltip_rect.bottom>window.innerHeight){
+                        // this should not be possible in practice (tooltip is above element that is hovered above, so for the tooltip to be below the
+                        // window area would also require the hovered element to be below the window, which is an impossible position for the mouse)
                         tooltip_element.style.setProperty("--top-offset",top-tooltip_rect.height+"px")
                     }
                 }
@@ -1342,7 +1347,7 @@ class XHR{
          */
         this.onload_funcs=[]
         /**
-         * @type {(()=>void)[]}
+         * @type {((xhr:XMLHttpRequest)=>void)[]}
          */
         this.onerror_funcs=[]
 
@@ -1383,8 +1388,10 @@ class XHR{
      * @brief internally used, execute all onerror callbacks
      */
     _onerror(){
+        console.error("error in XHR:", this.xhr.status, this.xhr.statusText, this.xhr)
+
         for(let cb of this.onerror_funcs){
-            cb.bind(this.xhr)()
+            cb.bind(this.xhr)(this.xhr)
         }
     }
     /**
@@ -1417,7 +1424,7 @@ class XHR{
     }
     /**
      * @brief add a callback to be executed on failed request
-     * @param {()=>void} cb
+     * @param {(xhr:XMLHttpRequest)=>void} cb
      * @returns {this}
      */
     onerror(cb){
@@ -1441,27 +1448,33 @@ class XHR{
         this.xhr.open(method,url,this.async)
 
         let data_str=null
-        if(data instanceof Object){
-            if(content_type===undefined)
+        if(typeof data === 'object' && data !== null){
+            if(content_type===undefined){
                 content_type="application/json"
+            }
 
             data_str=JSON.stringify(data)
-        }else if(data instanceof String || typeof data==="string"){
-            if(content_type===undefined)
+        }else if(typeof data==="string"){
+            if(content_type===undefined){
                 content_type="text/plain"
+            }
 
-            data_str=String(data)
+            data_str=data
         }else if(data!==null){
             console.error("data must be an object or string")
+            return
         }
 
-        if(content_type)
+        if(content_type){
             this.xhr.setRequestHeader("Content-Type", content_type)
+        }
 
         try{
             if(data===null){
+                console.log("sending no data to "+url)
                 this.xhr.send()
             }else{
+                console.log("sending to "+url+" :",data_str)
                 this.xhr.send(data_str)
             }
         }catch(e){
