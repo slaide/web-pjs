@@ -1224,11 +1224,19 @@ class Manager{
                 function showTooltip(){
                     if(tooltip_element!=null){return}
 
+                    const elementBoundingClientRect=element.getBoundingClientRect()
+
+                    // under some circumstances the tooltip popup trigger may be called when an element
+                    // is not visible -> in that case, do not actually trigger the popup
+                    if((elementBoundingClientRect.width*elementBoundingClientRect.height)==0){
+                        return
+                    }
+
                     // offset of element from top of viewport
-                    let top=element.getBoundingClientRect().top
-                    let bottom=element.getBoundingClientRect().bottom
+                    let top=elementBoundingClientRect.top
+                    let bottom=elementBoundingClientRect.bottom
                     // center tooltip over element
-                    let left=element.getBoundingClientRect().left+element.getBoundingClientRect().width/2
+                    let left=elementBoundingClientRect.left+elementBoundingClientRect.width/2
 
                     tooltip_element=document.createElement("div")
                     tooltip_element.classList.add("p-tooltip")
@@ -1277,6 +1285,11 @@ class Manager{
 
                 // if element is removed from dom while tooltip is shown, remove tooltip
                 this.onElementRemovedFromDOM(element,()=>{
+                    // clear the timeout that caused #2
+                    if(tooltip_time_to_show_timer!=null){
+                        clearTimeout(tooltip_time_to_show_timer)
+                    }
+
                     if(tooltip_element!=null){
                         // tooltip is currently being shown
                         removeTooltip()
