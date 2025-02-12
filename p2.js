@@ -582,6 +582,21 @@ class Manager{
                     }
                     const ret=Reflect.get(target,prop)
 
+                    if(target instanceof Map && ["set","get"].includes(prop)){
+                        // return custom function because Map.[set|get] is called on the value, and if that is a proxy insteaf of a map object, the function will not be called
+                        if(prop=="set"){
+                            /**@ts-ignore */
+                            return function(key,value){
+                                return target.set(key,value)
+                            }
+                        }else{
+                            /**@ts-ignore */
+                            return function(key){
+                                return target.get(key)
+                            }
+                        }
+                    }
+
                     // if prop is in this list of properties, return the value of the property immediately
                     if(typeof prop == "symbol" || typeof ret == "function" || ["valueOf","toString","length"].includes(prop)){
                         return ret
@@ -1018,7 +1033,7 @@ class Manager{
                  * @param {any} item 
                  * @param {number} index 
                  */
-                function instantiate(item,index){
+                const instantiate=(item,index)=>{
                     // list of all elements instantiated from this one item
                     let newElements=[]
 
@@ -1221,7 +1236,7 @@ class Manager{
 
                 /** @type{HTMLElement?} */
                 let tooltip_element=null
-                function showTooltip(){
+                const showTooltip=()=>{
                     if(tooltip_element!=null){return}
 
                     const elementBoundingClientRect=element.getBoundingClientRect()
@@ -1484,10 +1499,8 @@ class XHR{
 
         try{
             if(data===null){
-                console.log("sending no data to "+url)
                 this.xhr.send()
             }else{
-                console.log("sending to "+url+" :",data_str)
                 this.xhr.send(data_str)
             }
         }catch(e){
