@@ -461,8 +461,11 @@ class Manager{
             }
 
             /** replace all templates in attribute value with values from cache */
+            let animated_replace={requested:false}
             function replaceAll(){
                 if(attribute==null)return;
+
+                animated_replace.requested=false
 
                 let new_value=raw_value
                 for(let entry of entries){
@@ -483,7 +486,7 @@ class Manager{
                 valuecache.set(entry,first_value)
 
                 /** @type{ProxySetterInterceptCallback} */
-                const callbackOnValueChange=function(o,p,n){
+                const callbackOnValueChange=(o,p,n)=>{
                     if(attribute==null)return;
 
                     // refresh cached value
@@ -493,7 +496,13 @@ class Manager{
                     }
                     valuecache.set(entry,freshvalue)
                     
-                    replaceAll()
+                    // request replacement at next animation step
+                    // and set flag that replacement has been requested
+                    // to avoid duplicates
+                    if(!animated_replace.requested){
+                        animated_replace.requested=true
+                        requestAnimationFrame(replaceAll)
+                    }
                 }
 
                 if(stack_is_valid){
@@ -576,11 +585,17 @@ class Manager{
 
             let new_proxy=new Proxy(obj,{
                 get:(target,prop)=>{
+                    let t=performance.now()
+                    let dt=0
                     if(!EvalStack.done){
                         /// @ts-ignore
                         EvalStack.stack.push([target,prop])
                     }
+                    const DT=0.5
+                    const ENABLED=false
+                    if(ENABLED){dt=performance.now()-t;if(dt>DT)console.log("time in ms",dt,target,prop);t=performance.now()}
                     const ret=Reflect.get(target,prop)
+                    if(ENABLED){dt=performance.now()-t;if(dt>DT)console.log("time in ms",dt,target,prop);t=performance.now()}
 
                     if(target instanceof Map && ["set","get"].includes(prop)){
                         // return custom function because Map.[set|get] is called on the value, and if that is a proxy insteaf of a map object, the function will not be called
@@ -596,17 +611,21 @@ class Manager{
                             }
                         }
                     }
+                    if(ENABLED){dt=performance.now()-t;if(dt>DT)console.log("time in ms",dt,target,prop);t=performance.now()}
 
                     // if prop is in this list of properties, return the value of the property immediately
                     if(typeof prop == "symbol" || typeof ret == "function" || ["valueOf","toString","length"].includes(prop)){
                         return ret
                     }
+                    if(ENABLED){dt=performance.now()-t;if(dt>DT)console.log("time in ms",dt,target,prop);t=performance.now()}
 
                     if(typeof ret=="object" && ret!=null){
                         /// @ts-ignore
                         return me.ensureManagedObject(ret,me.objCallbacks.get(obj))
                     }
+                    if(ENABLED){dt=performance.now()-t;if(dt>DT)console.log("time in ms",dt,target,prop);t=performance.now()}
                     EvalStack.done=true
+                    if(ENABLED){dt=performance.now()-t;if(dt>DT)console.log("time in ms",dt,target,prop);t=performance.now()}
                     return ret
                 },
                 set:(target,prop,value)=>{
