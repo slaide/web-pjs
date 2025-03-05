@@ -30,11 +30,22 @@ function getReplacements(text){
     const replacements=[]
     let match
     // match all {{...}} patterns
-    const re=/{{(.*?)}}/g
+    const re=/{{(.*?)}}/gs
     while(match=re.exec(text)){
         replacements.push(match[1])
     }
     return replacements
+}
+
+/**
+ * takes an <expression as string> as argument (may be null, or have length zero), and escapes it so that it can be evaluated.
+ * includes putting the expression in parens () to allow evaluating multi-line expressions.
+ * @param {string|undefined|null} v 
+ * @returns {string}
+ */
+function quoteExpression(v){
+    if(v!=null && v.length>0)return "("+v+")"
+    return ""
 }
 
 class Binding{
@@ -412,7 +423,7 @@ class Manager{
                 const entryFunctions=new Map()
                 for(let entry of entries){
                     if(entryFunctions.has(entry)){continue;}
-                    let entryfunc=new Function("bindings_",bindings_str+"; return "+entry)
+                    let entryfunc=new Function("bindings_",bindings_str+"; return "+quoteExpression(entry))
                     entryFunctions.set(entry,entryfunc)
                 }
 
@@ -456,7 +467,7 @@ class Manager{
             const entryFunctions=new Map()
             for(let entry of entries){
                 if(entryFunctions.has(entry)){continue;}
-                let entryfunc=new Function("element","bindings_",bindings_str+"; return "+entry)
+                let entryfunc=new Function("element","bindings_",bindings_str+"; return "+quoteExpression(entry))
                 entryFunctions.set(entry,entryfunc)
             }
 
@@ -984,7 +995,7 @@ class Manager{
                     /* @type{string} current value of the attribute */
                     let current_attribute_value=""
 
-                    const f=new Function("bindings",bindings.expand("bindings")+" ; return "+attribute_value_str)
+                    const f=new Function("bindings",bindings.expand("bindings")+" ; return "+quoteExpression(attribute_value_str))
                     const rm_value_change_cb=this.onValueChangeCallback(()=>f(bindings),(new_value)=>{
                         current_attribute_value=new_value
                         if(currently_visible){
@@ -994,7 +1005,7 @@ class Manager{
                     remove_callbacks.splice(0,0,...rm_value_change_cb)
 
                     if(conditional_visibility!=null){
-                        const f_if=new Function("bindings",bindings.expand("bindings")+" ; return "+conditional_visibility)
+                        const f_if=new Function("bindings",bindings.expand("bindings")+" ; return "+quoteExpression(conditional_visibility))
                         const rm_visibility_change_cb=this.onValueChangeCallback(()=>f_if(bindings),function(new_value){
                             currently_visible=new_value
                             if(currently_visible){
@@ -1249,7 +1260,7 @@ class Manager{
                 // do the replacement thing
                 const entries=getReplacements(p_tooltip_attribute)
                 for(let entry of entries){
-                    let entryfunc=new Function("bindings_in",bindings_in.expand("bindings_in")+"; return "+entry)
+                    let entryfunc=new Function("bindings_in",bindings_in.expand("bindings_in")+"; return "+quoteExpression(entry))
                     tooltip_content=tooltip_content.replace("{{"+entry+"}}",entryfunc(bindings_in))
                 }
 
