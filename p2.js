@@ -1,3 +1,5 @@
+"use strict";
+
 /**
  * 
  * @param {Element} element 
@@ -285,16 +287,24 @@ class EvalStack{
  */
 
 class Manager{
+    start(){
+        if(this._started)return
+
+        let target_elements=document.querySelectorAll(".data")
+        /// @ts-ignore
+        this.init(target_elements)
+
+        this._started=true
+    }
     /**
      * 
      * @param {{}?} options 
      */
     constructor(options=null){
-        document.addEventListener("DOMContentLoaded",()=>{
-            let target_elements=document.querySelectorAll(".data")
-            /// @ts-ignore
-            this.init(target_elements)
-        })
+        this._started=false
+
+        window.addEventListener("load",()=>this.start())
+
         this.managedValues=new Map()
         this.managedProxies=new Map()
         /** @type {Map<object,ProxySetterInterceptCallback[]>} */
@@ -317,7 +327,7 @@ class Manager{
         /** @type {(()=>void)[]} */
         this._onIntervalCallbacks=[]
 
-        /** @type{Map<Element,((element:Element)=>void)[]>} */
+        /** @type {Map<Element,((element:Element)=>void)[]>} */
         this._elementDeletedCallbacks=new Map()
         // https://stackoverflow.com/questions/31798816/simple-mutationobserver-version-of-domnoderemovedfromdocument
         /** @type {MutationObserver}*/
@@ -354,8 +364,8 @@ class Manager{
     }
     /**
      * register callback for an element that has been removed from the dom
-     * @param{Element} element
-     * @param{(element:Element)=>void} cb
+     * @param {Element} element
+     * @param {(element:Element)=>void} cb
      */
     onElementRemovedFromDOM(element,cb){
         let callbacks=this._elementDeletedCallbacks.get(element)
@@ -369,7 +379,7 @@ class Manager{
      * should be called when an element has been removed from the dom (ensures that no dangling references remain)
      * 
      * calling this mainly improved performance
-     * @param{Element} element
+     * @param {Element} element
      */
     cleanupAfterElementHasBeenRemoved(element){
         if(this._elementDeletedCallbacks.has(element)){
@@ -407,7 +417,7 @@ class Manager{
             this.objTextNodes.set(element,textNodes)
         }
         const textNodes=this.objTextNodes.get(element)
-        /** @type{(()=>void)[]} */
+        /** @type {(()=>void)[]} */
         let remove_callbacks_from_textnodes=[]
         if(textNodes!=null && textNodes.length>0){
             for(let textNode of textNodes){
@@ -453,14 +463,14 @@ class Manager{
             const attribute=element.attributes.item(attributeIndex)
             if(!attribute)continue;
 
-            /**@type{(()=>void)[]} */
+            /**@type {(()=>void)[]} */
             let remove_callbacks=[]
             const raw_value=attribute.value
             const entries=getReplacements(raw_value)
 
             /**
              * value cache to avoid redundant updates (which are costly on attributes)
-             * @type{Map<string,any>}
+             * @type {Map<string,any>}
              */
             const valuecache=new Map()
 
@@ -496,7 +506,7 @@ class Manager{
 
                 valuecache.set(entry,first_value)
 
-                /** @type{ProxySetterInterceptCallback} */
+                /** @type {ProxySetterInterceptCallback} */
                 const callbackOnValueChange=(o,p,n)=>{
                     if(attribute==null)return;
 
@@ -608,7 +618,8 @@ class Manager{
                     const ret=Reflect.get(target,prop)
                     if(ENABLED){dt=performance.now()-t;if(dt>DT)console.log("time in ms",dt,target,prop);t=performance.now()}
 
-                    if(target instanceof Map && ["set","get"].includes(prop)){
+                    /// @ts-ignore
+                    if((target instanceof Map) && ["set","get"].includes(prop)){
                         // return custom function because Map.[set|get] is called on the value, and if that is a proxy insteaf of a map object, the function will not be called
                         if(prop=="set"){
                             /**@ts-ignore */
@@ -928,7 +939,7 @@ class Manager{
                 bindings.inherit(bindings_in)
             }
 
-            /** @type{(()=>void)[]} */
+            /** @type {(()=>void)[]} */
             let remove_callbacks=[]
 
             const p_if_attribute=element.getAttribute("p:if")
@@ -975,24 +986,24 @@ class Manager{
                 const attribute_binding_names=Object.keys(attribute_bindings)
 
                 for(let attribute_name of attribute_binding_names){
-                    /* @type{string | (object&{if?:string,value:string}) } */
+                    /** @type {string | (object&{if?:string,value:string}) } */
                     const attribute_config=attribute_bindings[attribute_name]
 
-                    /* @type{string} string expression that evaluates to the attribute value */
+                    /** @type {string} string expression that evaluates to the attribute value */
                     let attribute_value_str=""
 
-                    /* @type{string | null} string expression to evaluate if the attribute is visible or not */
+                    /** @type {string?} string expression to evaluate if the attribute is visible or not */
                     let conditional_visibility=null
                     if(attribute_config instanceof Object){
                         attribute_value_str=attribute_config.value
-                        conditional_visibility=attribute_config.if
+                        conditional_visibility=attribute_config.if||null
                     }else{
                         attribute_value_str=attribute_config
                     }
 
-                    /* @type{boolean} indicate current visibility state of the attribute */
+                    /** @type {boolean} indicate current visibility state of the attribute */
                     let currently_visible=true
-                    /* @type{string} current value of the attribute */
+                    /** @type {string} current value of the attribute */
                     let current_attribute_value=""
 
                     const f=new Function("bindings",bindings.expand("bindings")+" ; return "+quoteExpression(attribute_value_str))
@@ -1028,7 +1039,7 @@ class Manager{
 
                 const _container_value=eval(bindings_in.expand("bindings_in")+container_name)
                 if(_container_value==null)continue;
-                /** @type{any} */
+                /** @type {any} */
                 let container=undefined
                 try{
                     container=this.ensureManagedObject(_container_value)
@@ -1055,7 +1066,7 @@ class Manager{
                     element_templates=element.children
                 }
 
-                /** @type{ Map< number, object & { elements: Element[], delete: ()=>void } > } */
+                /** @type { Map< number, object & { elements: Element[], delete: ()=>void } > } */
                 let instances=new Map()
 
                 /**
@@ -1264,7 +1275,7 @@ class Manager{
                     tooltip_content=tooltip_content.replace("{{"+entry+"}}",entryfunc(bindings_in))
                 }
 
-                /** @type{HTMLElement?} */
+                /** @type {HTMLElement?} */
                 let tooltip_element=null
                 const showTooltip=()=>{
                     if(tooltip_element!=null){return}
@@ -1321,7 +1332,7 @@ class Manager{
                     tooltip_element=null
                 }
 
-                /** @type{number?} */
+                /** @type {number?} */
                 let tooltip_time_to_show_timer=null
                 element.addEventListener("mouseenter",()=>{
                     if(tooltip_time_to_show_timer!=null)return
@@ -1457,7 +1468,7 @@ class XHR{
      * @returns {undefined|any|any[]}
      */
     _onsuccess(){
-        /** @type{any[]} */
+        /** @type {any[]} */
         let ret=[]
         for(let cb of this.onload_funcs){
             let res=cb(this.xhr)
@@ -1528,10 +1539,10 @@ class XHR{
         }
 
         try{
-            if(data===null){
-                this.xhr.send()
-            }else{
+            if(data_str!==null){
                 this.xhr.send(data_str)
+            }else{
+                this.xhr.send()
             }
         }catch(e){
             if(!this.aborted)
